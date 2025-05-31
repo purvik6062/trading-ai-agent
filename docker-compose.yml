@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  trading-agent:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Add your environment variables here or use .env file
+      - GAME_API_KEY=${GAME_API_KEY}
+      - ENZYME_VAULT_ADDRESS=${ENZYME_VAULT_ADDRESS}
+      - ENZYME_PRIVATE_KEY=${ENZYME_PRIVATE_KEY}
+      - ETHEREUM_RPC_URL=${ETHEREUM_RPC_URL}
+      - COINGECKO_API_KEY=${COINGECKO_API_KEY}
+      - DEFAULT_TRAIL_PERCENT=${DEFAULT_TRAIL_PERCENT:-0.01}
+      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-1000}
+      - MIN_POSITION_SIZE=${MIN_POSITION_SIZE:-10}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Mount logs directory for persistence
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Add Redis for caching (if needed for scaling)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+
+  # Optional: Add PostgreSQL for persistent storage (if needed)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_DB: trading_agent
+  #     POSTGRES_USER: trading
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+# volumes:
+#   redis_data:
+#   postgres_data:
