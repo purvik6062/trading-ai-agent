@@ -97,7 +97,7 @@ TP2: $0.0058
    Edit `.env` with your configuration:
    ```env
    # Game Engine API Configuration
-   GAME_API_KEY=your_game_api_key_here
+   GAME_ENGINE_API_KEY=your_game_api_key_here
 
    # Enzyme Protocol Configuration
    ENZYME_VAULT_ADDRESS=your_enzyme_vault_address

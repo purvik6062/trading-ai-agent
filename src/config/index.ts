@@ -64,7 +64,12 @@ export const config = {
 
 // Validate required environment variables
 export const validateConfig = (): void => {
-  const required = ["ENZYME_VAULT_ADDRESS", "ENZYME_PRIVATE_KEY", "ETHEREUM_RPC_URL"];
+  const required = [
+    "GAME_ENGINE_API_KEY",
+    "ENZYME_VAULT_ADDRESS",
+    "ENZYME_PRIVATE_KEY",
+    "ETHEREUM_RPC_URL",
+  ];
 
   const missing = required.filter((key) => !process.env[key]);
 
