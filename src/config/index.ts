@@ -12,13 +12,13 @@ export const config = {
   // Enzyme Protocol Configuration
   enzyme: {
     vaultAddress: process.env.ENZYME_VAULT_ADDRESS || "",
-    privateKey: process.env.PRIVATE_KEY || "",
+    privateKey: process.env.ENZYME_PRIVATE_KEY || "",
     ethereumRpcUrl: process.env.ETHEREUM_RPC_URL || "",
   },
 
   // Wallet Configuration
   wallet: {
-    privateKey: process.env.PRIVATE_KEY || "",
+    privateKey: process.env.ENZYME_PRIVATE_KEY || "",
   },
 
   // RPC Configuration
@@ -64,7 +64,7 @@ export const config = {
 
 // Validate required environment variables
 export const validateConfig = (): void => {
-  const required = ["ENZYME_VAULT_ADDRESS", "PRIVATE_KEY", "ETHEREUM_RPC_URL"];
+  const required = ["ENZYME_VAULT_ADDRESS", "ENZYME_PRIVATE_KEY", "ETHEREUM_RPC_URL"];
 
   const missing = required.filter((key) => !process.env[key]);
 

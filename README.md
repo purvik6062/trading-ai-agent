@@ -302,4 +302,6 @@ For support and questions:
 - Check the logs in `logs/` directory
 - Review configuration in `/config` endpoint
 - Test signal parsing with `/parse-signal` endpoint
-- Monitor system health via `/health` endpoint 
+- Monitor system health via `/health` endpoint
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/purvik6062/ctxbt-cron-jobs)
