@@ -1,6 +1,6 @@
 import express from "express";
 import { config } from "./config";
-import { logger } from "./utils/logger";
+import { logger, serializeForAPI } from "./utils/logger";
 import { EnzymeVaultService } from "./services/enzymeService";
 import {
   GameEngineService,
@@ -101,7 +101,7 @@ app.get("/config", (req, res) => {
  */
 app.post("/signal", async (req, res) => {
   try {
-    const { signal } = req.body;
+    const { signal } = await req.body;
 
     if (!signal) {
       return res.status(400).json({ error: "Signal is required" });
@@ -156,11 +156,13 @@ app.get("/positions", async (req, res) => {
     const positions = await gameEngineService.getCurrentPositions();
     const trailingStopPositions = trailingStopService.getActivePositions();
 
-    res.json({
+    const responseData = {
       vault: positions,
       trailingStop: trailingStopPositions,
       total: positions.length + trailingStopPositions.length,
-    });
+    };
+
+    res.json(serializeForAPI(responseData));
   } catch (error) {
     logger.error("Error getting positions:", error);
     res.status(500).json({
@@ -173,9 +175,9 @@ app.get("/positions", async (req, res) => {
 /**
  * Parse signal for testing
  */
-app.post("/parse-signal", (req, res) => {
+app.post("/parse-signal", async (req, res) => {
   try {
-    const { signal } = req.body;
+    const { signal } = await req.body;
 
     if (!signal) {
       return res.status(400).json({ error: "Signal is required" });
@@ -205,11 +207,14 @@ app.get("/vault", async (req, res) => {
     const vaultInfo = await gameEngineService.getVaultInfo();
     const portfolioValue = await gameEngineService.getPortfolioValue();
 
-    res.json({
+    const responseData = {
       ...vaultInfo,
       portfolioValue,
       timestamp: new Date().toISOString(),
-    });
+    };
+
+    // Safely serialize the data to handle BigInt values
+    res.json(serializeForAPI(responseData));
   } catch (error) {
     logger.error("Error getting vault info:", error);
     res.status(500).json({
@@ -244,11 +249,13 @@ app.post("/trade", async (req, res) => {
       swapStrategy
     );
 
-    res.json({
+    const responseData = {
       success: true,
       transaction: result,
       swapDetails: result.swapDetails,
-    });
+    };
+
+    res.json(serializeForAPI(responseData));
   } catch (error) {
     logger.error("Error executing manual trade:", error);
     res.status(500).json({

@@ -535,7 +535,7 @@ export class GameEngineService {
   }
 
   /**
-   * Use Game Engine AI to make trading decisions
+   * Make AI decision on whether to execute trade
    */
   private async makeAIDecision(
     context: any
@@ -587,6 +587,26 @@ export class GameEngineService {
   }
 
   /**
+   * Serialize swap details to handle BigInt values
+   */
+  private serializeSwapDetails(swapDetails: any): any {
+    const serialized: any = {};
+
+    for (const [key, value] of Object.entries(swapDetails)) {
+      if (typeof value === "bigint") {
+        serialized[key] = value.toString();
+      } else if (value && typeof value === "object" && !Array.isArray(value)) {
+        // Recursively handle nested objects
+        serialized[key] = this.serializeSwapDetails(value);
+      } else {
+        serialized[key] = value;
+      }
+    }
+
+    return serialized;
+  }
+
+  /**
    * Execute a trade based on the signal and AI decision
    */
   private async executeTrade(
@@ -629,11 +649,16 @@ export class GameEngineService {
         swapStrategy
       );
 
+      // Serialize swap details properly by converting BigInt values to strings
+      const serializedSwapDetails = this.serializeSwapDetails(
+        result.swapDetails
+      );
+
       logger.info("Trade executed successfully:", {
         signal: signal.signal,
         symbol: signal.token,
         txHash: result.hash,
-        swapDetails: result.swapDetails,
+        swapDetails: serializedSwapDetails,
       });
 
       // Create position object
@@ -732,9 +757,10 @@ export class GameEngineService {
    */
   private async checkTrailingStop(position: Position): Promise<void> {
     try {
-      const currentPrice = await this.coinGeckoService.getTokenPrice(
-        position.signal.token
-      );
+      // Convert token symbol to CoinGecko ID for price lookup
+      const coinGeckoId = this.getCoinGeckoId(position.signal.token);
+      const currentPrice =
+        await this.coinGeckoService.getTokenPrice(coinGeckoId);
 
       // Implement trailing stop logic here
       // This would check if price has retraced 1% from peak after hitting TP1
@@ -747,6 +773,23 @@ export class GameEngineService {
     } catch (error) {
       logger.error("Error checking trailing stop:", error);
     }
+  }
+
+  /**
+   * Convert symbol to CoinGecko ID for price lookup
+   */
+  private getCoinGeckoId(symbol: string): string {
+    // Map common symbols to CoinGecko IDs
+    const coinGeckoIdMap: Record<string, string> = {
+      ethereum: "ethereum",
+      bitcoin: "bitcoin",
+      arbitrum: "arbitrum",
+      "usd-coin": "usd-coin",
+      tether: "tether",
+      // Add more mappings as needed
+    };
+
+    return coinGeckoIdMap[symbol.toLowerCase()] || symbol.toLowerCase();
   }
 
   /**

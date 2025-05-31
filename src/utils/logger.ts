@@ -15,6 +15,26 @@ const getCircularReplacer = () => {
   };
 };
 
+// Replacer function to handle both circular references and BigInt values
+const getBigIntAndCircularReplacer = () => {
+  const seen = new WeakSet();
+  return (key: string, value: any) => {
+    // Handle BigInt values
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+
+    // Handle circular references
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+    }
+    return value;
+  };
+};
+
 // Safe JSON stringify function that handles circular references
 const safeStringify = (obj: any): string => {
   try {
@@ -23,6 +43,21 @@ const safeStringify = (obj: any): string => {
     // Fallback for any other JSON.stringify errors
     return `[Unable to stringify: ${error instanceof Error ? error.message : "Unknown error"}]`;
   }
+};
+
+// Safe JSON stringify function that handles both BigInt and circular references
+export const safeBigIntStringify = (obj: any): string => {
+  try {
+    return JSON.stringify(obj, getBigIntAndCircularReplacer(), 2);
+  } catch (error) {
+    // Fallback for any other JSON.stringify errors
+    return `[Unable to stringify: ${error instanceof Error ? error.message : "Unknown error"}]`;
+  }
+};
+
+// Function to safely convert objects with BigInt for API responses
+export const serializeForAPI = (obj: any): any => {
+  return JSON.parse(JSON.stringify(obj, getBigIntAndCircularReplacer()));
 };
 
 const logFormat = winston.format.combine(

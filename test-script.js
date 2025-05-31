@@ -55,11 +55,11 @@ async function testSignalParsing() {
 
 async function testSignalProcessing() {
     console.log('\n🚀 Testing Signal Processing...');
-
-    // Test with HOLD signal first (safer)
+    console.log(testSignals.buySignal);
+    // Test with BUY signal first (safer)
     try {
         const response = await axios.post(`${BASE_URL}/signal`, {
-            message: testSignals.holdSignal
+            signal: testSignals.buySignal
         });
         console.log('✅ Signal Processing:', response.data);
     } catch (error) {
