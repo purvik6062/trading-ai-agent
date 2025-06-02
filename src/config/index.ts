@@ -34,7 +34,9 @@ export const config = {
 
   // Trading Configuration
   trading: {
-    defaultTrailPercent: 1.0, // 1% trailing stop
+    defaultTrailPercent: parseFloat(
+      process.env.DEFAULT_TRAIL_PERCENT || "0.02"
+    ), // 2% trailing stop as decimal
     maxPositionSize: 25.0, // 25% max position size
     minPositionSize: 5.0, // 5% min position size
   },
@@ -42,7 +44,7 @@ export const config = {
   // Trailing Stop Configuration
   trailingStop: {
     enabled: process.env.TRAILING_STOP_ENABLED === "true" || true,
-    percentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || "1.0"),
+    percentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || "2.0"),
   },
 
   // Server Configuration
