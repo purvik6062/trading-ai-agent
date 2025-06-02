@@ -36,6 +36,9 @@ export class TrailingStopService {
     shouldExit: boolean;
     reason?: string;
     exitPrice?: number;
+    isPartialExit?: boolean;
+    exitPercentage?: number;
+    targetHit?: number;
   } {
     const position = this.positions.get(positionId);
     if (!position) {
@@ -46,14 +49,40 @@ export class TrailingStopService {
     position.currentPrice = currentPrice;
     position.updatedAt = new Date();
 
-    // Check if TP1 has been hit
-    const tp1Hit = this.checkTP1Hit(position, currentPrice);
-    if (tp1Hit && !position.trailingStop.tp1Hit) {
-      position.trailingStop.tp1Hit = true;
-      position.trailingStop.isActive = true;
+    // Check if any new targets have been hit
+    const targetResult = this.checkTargetsHit(position, currentPrice);
+    if (targetResult.newTargetHit) {
       logger.info(
-        `TP1 hit for position ${positionId}, activating trailing stop`
+        `Target ${targetResult.targetIndex + 1} hit for position ${positionId}: $${targetResult.targetPrice}`
       );
+
+      // Mark target as hit
+      position.trailingStop.targetsHit[targetResult.targetIndex] = true;
+
+      // If it's TP1 and trailing stop wasn't active, activate it
+      if (targetResult.targetIndex === 0 && !position.trailingStop.tp1Hit) {
+        position.trailingStop.tp1Hit = true;
+        position.trailingStop.isActive = true;
+        logger.info(
+          `TP1 hit for position ${positionId}, activating trailing stop`
+        );
+      }
+
+      // Check if this target requires a partial exit
+      const exitPercentage = this.getExitPercentageForTarget(
+        position,
+        targetResult.targetIndex
+      );
+      if (exitPercentage > 0) {
+        return {
+          shouldExit: true,
+          reason: `target_${targetResult.targetIndex + 1}_hit`,
+          exitPrice: currentPrice,
+          isPartialExit: exitPercentage < 100,
+          exitPercentage,
+          targetHit: targetResult.targetIndex + 1,
+        };
+      }
     }
 
     // If trailing stop is not active, check regular stop loss
@@ -67,23 +96,88 @@ export class TrailingStopService {
   }
 
   /**
-   * Check if TP1 has been hit
+   * Check if any targets have been hit
    */
-  private checkTP1Hit(position: Position, currentPrice: number): boolean {
-    const { signal, targets } = position.signal;
+  private checkTargetsHit(
+    position: Position,
+    currentPrice: number
+  ): {
+    newTargetHit: boolean;
+    targetIndex: number;
+    targetPrice: number;
+  } {
+    const { signal } = position.signal;
+    const targets = position.signal.targets || [];
+    const targetsHit = position.trailingStop.targetsHit;
 
-    switch (signal) {
-      case SignalType.BUY:
-        return currentPrice >= targets.tp1;
-      case SignalType.PUT_OPTIONS:
-        return currentPrice <= targets.tp1;
-      default:
-        return false;
+    for (let i = 0; i < targets.length; i++) {
+      // Skip if this target was already hit
+      if (targetsHit[i]) continue;
+
+      const targetPrice = targets[i];
+      let targetHit = false;
+
+      switch (signal.toLowerCase()) {
+        case "buy":
+          targetHit = currentPrice >= targetPrice;
+          break;
+        case "put options":
+          targetHit = currentPrice <= targetPrice;
+          break;
+      }
+
+      if (targetHit) {
+        return {
+          newTargetHit: true,
+          targetIndex: i,
+          targetPrice,
+        };
+      }
+    }
+
+    return { newTargetHit: false, targetIndex: -1, targetPrice: 0 };
+  }
+
+  /**
+   * Get exit percentage for a specific target
+   */
+  private getExitPercentageForTarget(
+    position: Position,
+    targetIndex: number
+  ): number {
+    // If custom percentages are defined, use those
+    if (
+      position.trailingStop.partialExitPercentages &&
+      position.trailingStop.partialExitPercentages[targetIndex] !== undefined
+    ) {
+      return position.trailingStop.partialExitPercentages[targetIndex];
+    }
+
+    // Default strategy:
+    // - TP1: Exit 50% of position
+    // - TP2: Exit remaining 50% (full exit)
+    // - TP3+: Full exit if not already exited
+    const targets = position.signal.targets || [];
+
+    switch (targetIndex) {
+      case 0: // TP1
+        return targets.length > 1 ? 50 : 100; // 50% if there are more targets, 100% if only one target
+      case 1: // TP2
+        return 100; // Exit remaining position
+      default: // TP3+
+        return 100; // Full exit
     }
   }
 
   /**
-   * Check regular stop loss (before TP1 is hit)
+   * Check if TP1 has been hit (legacy method, now uses the new system)
+   */
+  private checkTP1Hit(position: Position, currentPrice: number): boolean {
+    return position.trailingStop.targetsHit[0] || false;
+  }
+
+  /**
+   * Check regular stop loss condition
    */
   private checkStopLoss(
     position: Position,
@@ -95,41 +189,45 @@ export class TrailingStopService {
   } {
     const { signal, stopLoss } = position.signal;
 
-    let shouldExit = false;
-
-    switch (signal) {
-      case SignalType.BUY:
-        shouldExit = currentPrice <= stopLoss;
+    switch (signal.toLowerCase()) {
+      case "buy":
+        if (currentPrice <= stopLoss) {
+          logger.info(
+            `Stop loss triggered for BUY position ${position.id}: ${currentPrice} <= ${stopLoss}`
+          );
+          return {
+            shouldExit: true,
+            reason: "stop_loss_buy",
+            exitPrice: currentPrice,
+          };
+        }
         break;
-      case SignalType.PUT_OPTIONS:
-        shouldExit = currentPrice >= stopLoss;
-        break;
-      default:
-        return { shouldExit: false };
-    }
 
-    if (shouldExit) {
-      logger.info(
-        `Stop loss triggered for position ${position.id} at price ${currentPrice}`
-      );
-      return {
-        shouldExit: true,
-        reason: "stop_loss",
-        exitPrice: currentPrice,
-      };
+      case "put options":
+        if (currentPrice >= stopLoss) {
+          logger.info(
+            `Stop loss triggered for PUT position ${position.id}: ${currentPrice} >= ${stopLoss}`
+          );
+          return {
+            shouldExit: true,
+            reason: "stop_loss_put",
+            exitPrice: currentPrice,
+          };
+        }
+        break;
     }
 
     return { shouldExit: false };
   }
 
   /**
-   * Update peak price for trailing stop
+   * Update peak/lowest price for trailing stop
    */
   private updatePeakPrice(position: Position, currentPrice: number): void {
     const { signal } = position.signal;
 
-    switch (signal) {
-      case SignalType.BUY:
+    switch (signal.toLowerCase()) {
+      case "buy":
         if (
           !position.trailingStop.peakPrice ||
           currentPrice > position.trailingStop.peakPrice
@@ -140,7 +238,8 @@ export class TrailingStopService {
           );
         }
         break;
-      case SignalType.PUT_OPTIONS:
+
+      case "put options":
         if (
           !position.trailingStop.lowestPrice ||
           currentPrice < position.trailingStop.lowestPrice
@@ -171,8 +270,8 @@ export class TrailingStopService {
     let shouldExit = false;
     let exitReason = "";
 
-    switch (signal) {
-      case SignalType.BUY:
+    switch (signal.toLowerCase()) {
+      case "buy":
         if (peakPrice) {
           const trailThreshold = peakPrice * (1 - trailPercent);
           shouldExit = currentPrice <= trailThreshold;
@@ -180,7 +279,7 @@ export class TrailingStopService {
         }
         break;
 
-      case SignalType.PUT_OPTIONS:
+      case "put options":
         if (lowestPrice) {
           const trailThreshold = lowestPrice * (1 + trailPercent);
           shouldExit = currentPrice >= trailThreshold;
@@ -271,11 +370,18 @@ export class TrailingStopService {
   /**
    * Create a new trailing stop configuration
    */
-  static createTrailingStopConfig(trailPercent?: number): TrailingStopConfig {
+  static createTrailingStopConfig(
+    targetsCount: number = 2,
+    trailPercent?: number,
+    customExitPercentages?: number[]
+  ): TrailingStopConfig {
     return {
       trailPercent: trailPercent || config.trading.defaultTrailPercent,
       isActive: false,
       tp1Hit: false,
+      targetsHit: new Array(targetsCount).fill(false),
+      currentTargetIndex: 0,
+      partialExitPercentages: customExitPercentages,
     };
   }
 

@@ -3,7 +3,63 @@ import { logger } from "./logger";
 
 export class SignalParser {
   /**
-   * Parse trading signal from text message
+   * Parse trading signal from new object format
+   */
+  static parseSignalObject(signalData: any): TradingSignal | null {
+    try {
+      logger.debug("Parsing trading signal from object:", signalData);
+
+      // Validate required fields
+      if (!signalData.token || !signalData.tokenId || !signalData.signal) {
+        logger.warn("Missing required fields in signal object");
+        return null;
+      }
+
+      // Extract token symbol from token field (e.g., "COS (contentos)" -> "COS")
+      const tokenMatch = signalData.token.match(/^([A-Z]+)/);
+      const tokenSymbol = tokenMatch
+        ? tokenMatch[1]
+        : signalData.tokenMentioned || signalData.token;
+
+      const parsedSignal: TradingSignal = {
+        token: signalData.token,
+        tokenId: signalData.tokenId,
+        signal: signalData.signal,
+        currentPrice: signalData.currentPrice || 0,
+        targets: Array.isArray(signalData.targets) ? signalData.targets : [],
+        stopLoss: signalData.stopLoss || 0,
+        timeline: signalData.timeline || "Not specified",
+        maxExitTime: signalData.maxExitTime,
+        tradeTip: signalData.tradeTip || "",
+        tweet_id: signalData.tweet_id,
+        tweet_link: signalData.tweet_link,
+        tweet_timestamp: signalData.tweet_timestamp,
+        priceAtTweet: signalData.priceAtTweet,
+        exitValue: signalData.exitValue,
+        twitterHandle: signalData.twitterHandle,
+        tokenMentioned: signalData.tokenMentioned,
+        timestamp: new Date(),
+      };
+
+      logger.info("Successfully parsed signal object:", {
+        token: parsedSignal.token,
+        tokenId: parsedSignal.tokenId,
+        signal: parsedSignal.signal,
+        currentPrice: parsedSignal.currentPrice,
+        targets: parsedSignal.targets,
+        stopLoss: parsedSignal.stopLoss,
+        maxExitTime: parsedSignal.maxExitTime,
+      });
+
+      return parsedSignal;
+    } catch (error) {
+      logger.error("Error parsing signal object:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Parse trading signal from text message (legacy format)
    */
   static parseSignal(message: string): TradingSignal | null {
     try {
@@ -16,7 +72,7 @@ export class SignalParser {
         return null;
       }
 
-      const token = tokenMatch[1].toUpperCase();
+      const token = `${tokenMatch[1].toUpperCase()} (${tokenMatch[2]})`;
       const tokenId = tokenMatch[2].toLowerCase();
 
       // Extract signal type
@@ -27,24 +83,8 @@ export class SignalParser {
       }
 
       const signalText = signalMatch[1].trim();
-      let signal: SignalType;
 
-      switch (signalText.toLowerCase()) {
-        case "hold":
-          signal = SignalType.HOLD;
-          break;
-        case "buy":
-          signal = SignalType.BUY;
-          break;
-        case "put options":
-          signal = SignalType.PUT_OPTIONS;
-          break;
-        default:
-          logger.warn(`Unknown signal type: ${signalText}`);
-          return null;
-      }
-
-      // Extract entry price
+      // Extract entry price (now currentPrice)
       const entryPriceMatch = message.match(
         /💰\s*Entry Price:\s*\$?([0-9,.]+)/i
       );
@@ -53,19 +93,24 @@ export class SignalParser {
         return null;
       }
 
-      const entryPrice = parseFloat(entryPriceMatch[1].replace(/,/g, ""));
+      const currentPrice = parseFloat(entryPriceMatch[1].replace(/,/g, ""));
 
       // Extract targets
       const tp1Match = message.match(/TP1:\s*\$?([0-9,.]+)/i);
       const tp2Match = message.match(/TP2:\s*\$?([0-9,.]+)/i);
 
-      if (!tp1Match || !tp2Match) {
-        logger.warn("Target prices not found in message");
-        return null;
+      const targets: number[] = [];
+      if (tp1Match) {
+        targets.push(parseFloat(tp1Match[1].replace(/,/g, "")));
+      }
+      if (tp2Match) {
+        targets.push(parseFloat(tp2Match[1].replace(/,/g, "")));
       }
 
-      const tp1 = parseFloat(tp1Match[1].replace(/,/g, ""));
-      const tp2 = parseFloat(tp2Match[1].replace(/,/g, ""));
+      if (targets.length === 0) {
+        logger.warn("No target prices found in message");
+        return null;
+      }
 
       // Extract stop loss
       const stopLossMatch = message.match(/🛑\s*Stop Loss:\s*\$?([0-9,.]+)/i);
@@ -86,19 +131,21 @@ export class SignalParser {
       const tradeTipMatch = message.match(
         /💡\s*Trade Tip:\s*([^]+?)(?=\n\n|$)/i
       );
-      const tradeTip = tradeTipMatch ? tradeTipMatch[1].trim() : undefined;
+      const tradeTip = tradeTipMatch ? tradeTipMatch[1].trim() : "";
+
+      // Set maxExitTime to 7 days from now for legacy signals
+      const maxExitTime = new Date();
+      maxExitTime.setDate(maxExitTime.getDate() + 7);
 
       const parsedSignal: TradingSignal = {
         token,
         tokenId,
-        signal,
-        entryPrice,
-        targets: {
-          tp1,
-          tp2,
-        },
+        signal: signalText,
+        currentPrice,
+        targets,
         stopLoss,
         timeline,
+        maxExitTime: maxExitTime.toISOString(),
         tradeTip,
         timestamp: new Date(),
       };
@@ -106,9 +153,8 @@ export class SignalParser {
       logger.info("Successfully parsed trading signal:", {
         token,
         signal: signalText,
-        entryPrice,
-        tp1,
-        tp2,
+        currentPrice,
+        targets,
         stopLoss,
       });
 
@@ -130,13 +176,13 @@ export class SignalParser {
         return false;
       }
 
-      if (signal.entryPrice <= 0) {
+      if (signal.currentPrice <= 0) {
         logger.warn("Invalid signal: entry price must be positive");
         return false;
       }
 
-      if (signal.targets.tp1 <= 0 || signal.targets.tp2 <= 0) {
-        logger.warn("Invalid signal: target prices must be positive");
+      if (signal.targets.length === 0) {
+        logger.warn("Invalid signal: targets must be specified");
         return false;
       }
 
@@ -148,16 +194,13 @@ export class SignalParser {
       // Signal-specific validation
       switch (signal.signal) {
         case SignalType.BUY:
-          if (
-            signal.targets.tp1 <= signal.entryPrice ||
-            signal.targets.tp2 <= signal.entryPrice
-          ) {
+          if (signal.targets.some((target) => target <= signal.currentPrice)) {
             logger.warn(
               "Invalid BUY signal: targets must be above entry price"
             );
             return false;
           }
-          if (signal.stopLoss >= signal.entryPrice) {
+          if (signal.stopLoss >= signal.currentPrice) {
             logger.warn(
               "Invalid BUY signal: stop loss must be below entry price"
             );
@@ -166,16 +209,13 @@ export class SignalParser {
           break;
 
         case SignalType.PUT_OPTIONS:
-          if (
-            signal.targets.tp1 >= signal.entryPrice ||
-            signal.targets.tp2 >= signal.entryPrice
-          ) {
+          if (signal.targets.some((target) => target >= signal.currentPrice)) {
             logger.warn(
               "Invalid PUT signal: targets must be below entry price"
             );
             return false;
           }
-          if (signal.stopLoss <= signal.entryPrice) {
+          if (signal.stopLoss <= signal.currentPrice) {
             logger.warn(
               "Invalid PUT signal: stop loss must be above entry price"
             );
@@ -226,24 +266,24 @@ export class SignalParser {
    * Get signal summary for logging
    */
   static getSignalSummary(signal: TradingSignal): string {
-    return `${signal.signal} ${signal.token} @ $${signal.entryPrice} | TP1: $${signal.targets.tp1} | TP2: $${signal.targets.tp2} | SL: $${signal.stopLoss}`;
+    return `${signal.signal} ${signal.token} @ $${signal.currentPrice} | TP1: $${signal.targets[0]} | TP2: $${signal.targets[1]} | SL: $${signal.stopLoss}`;
   }
 
   /**
-   * Format signal for display
+   * Format signal as text for display
    */
   static formatSignal(signal: TradingSignal): string {
     return `
 🏛️ Token: ${signal.token} (${signal.tokenId})
 📈 Signal: ${signal.signal}
-💰 Entry Price: $${signal.entryPrice}
+💰 Entry Price: $${signal.currentPrice}
 🎯 Targets:
-  TP1: $${signal.targets.tp1}
-  TP2: $${signal.targets.tp2}
+  TP1: $${signal.targets[0]}
+  TP2: $${signal.targets[1]}
 🛑 Stop Loss: $${signal.stopLoss}
 ⏳ Timeline: ${signal.timeline}
-${signal.tradeTip ? `💡 Trade Tip: ${signal.tradeTip}` : ""}
-🕒 Parsed at: ${signal.timestamp.toISOString()}
+💡 Trade Tip: ${signal.tradeTip}
+📅 Timestamp: ${signal.timestamp ? signal.timestamp.toISOString() : new Date().toISOString()}
     `.trim();
   }
 }

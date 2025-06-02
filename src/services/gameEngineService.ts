@@ -37,6 +37,7 @@ export class GameEngineService {
   private provider: ethers.Provider;
   private signer: ethers.Signer;
   private vaultAddress: string;
+  private monitoringInterval: NodeJS.Timeout | null = null;
 
   constructor(config: GameEngineConfig) {
     // Initialize ethers provider and signer
@@ -55,7 +56,7 @@ export class GameEngineService {
    */
   async init(): Promise<void> {
     try {
-      logger.info("Initializing Game Engine service...");
+      logger.info("🤖 GameEngine: Initializing service...");
 
       // Create trading functions
       const tradingFunctions = this.createTradingFunctions();
@@ -116,10 +117,240 @@ export class GameEngineService {
       });
 
       await this.agent.init();
-      logger.info("Game Engine service initialized successfully");
+
+      // Start centralized position monitoring
+      this.startCentralizedMonitoring();
+
+      logger.info(
+        "🤖 GameEngine: Service initialized successfully with centralized monitoring"
+      );
     } catch (error) {
-      logger.error("Error initializing Game Engine service:", error);
+      logger.error("🤖 GameEngine: Error initializing service:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Start centralized monitoring for all positions
+   */
+  private startCentralizedMonitoring(): void {
+    // Monitor all positions every 30 seconds
+    this.monitoringInterval = setInterval(async () => {
+      try {
+        if (this.activePositions.size > 0) {
+          logger.debug(
+            `🤖 GameEngine: Monitoring ${this.activePositions.size} active positions`
+          );
+          await this.monitorAllPositions();
+        }
+      } catch (error) {
+        logger.error("🤖 GameEngine: Error in centralized monitoring:", error);
+      }
+    }, 30000); // 30 seconds
+
+    logger.info("🤖 GameEngine: Started centralized position monitoring", {
+      interval: "30s",
+    });
+  }
+
+  /**
+   * Monitor all active positions efficiently
+   */
+  private async monitorAllPositions(): Promise<void> {
+    const positions = Array.from(this.activePositions.values());
+    const uniqueTokenIds = [...new Set(positions.map((p) => p.signal.tokenId))];
+
+    try {
+      // Fetch all token prices in one API call for efficiency
+      const tokenPrices =
+        await this.coinGeckoService.getMultipleTokenPrices(uniqueTokenIds);
+      const priceMap = new Map(
+        tokenPrices.map((price) => [price.id, price.current_price])
+      );
+
+      // Check each position
+      for (const position of positions) {
+        const currentPrice = priceMap.get(position.signal.tokenId);
+        if (currentPrice) {
+          await this.checkPositionExitConditions(position, currentPrice);
+
+          // Also check for target hits using trailing stop service
+          const exitCondition = this.trailingStopService.updatePrice(
+            position.id,
+            currentPrice
+          );
+
+          if (exitCondition.shouldExit) {
+            if (exitCondition.isPartialExit) {
+              logger.info(
+                `🎯 Target ${exitCondition.targetHit} hit! Executing partial exit (${exitCondition.exitPercentage}%)`,
+                {
+                  positionId: position.id,
+                  token: position.signal.token,
+                  targetPrice:
+                    position.signal.targets[exitCondition.targetHit! - 1],
+                  currentPrice,
+                  exitPercentage: exitCondition.exitPercentage,
+                }
+              );
+
+              await this.executePartialExit(
+                position,
+                exitCondition.exitPercentage!,
+                currentPrice,
+                exitCondition.targetHit!
+              );
+            } else {
+              logger.info(`🚪 Full exit triggered: ${exitCondition.reason}`, {
+                positionId: position.id,
+                token: position.signal.token,
+                currentPrice,
+              });
+
+              await this.executeFullExit(
+                position,
+                currentPrice,
+                exitCondition.reason!
+              );
+            }
+          }
+        } else {
+          logger.warn(
+            `🤖 GameEngine: No price data for ${position.signal.tokenId}`
+          );
+        }
+      }
+    } catch (error) {
+      logger.error("🤖 GameEngine: Error monitoring positions:", error);
+    }
+  }
+
+  /**
+   * Execute partial exit when a target is hit
+   */
+  private async executePartialExit(
+    position: Position,
+    exitPercentage: number,
+    exitPrice: number,
+    targetHit: number
+  ): Promise<void> {
+    try {
+      // Calculate amount to exit
+      const amountToExit =
+        (position.remainingAmount || position.tokenAmountReceived || 0) *
+        (exitPercentage / 100);
+
+      if (amountToExit <= 0) {
+        logger.warn(
+          "🚨 Cannot execute partial exit: insufficient remaining amount"
+        );
+        return;
+      }
+
+      // Extract token symbol for the exit trade
+      const tokenMatch = position.signal.token.match(/^([A-Z]+)/);
+      const tokenSymbol = tokenMatch
+        ? tokenMatch[1]
+        : position.signal.tokenMentioned || "UNKNOWN";
+
+      // Execute partial swap back to USDC
+      const swapStrategy = {
+        fromTokenSymbol: tokenSymbol,
+        toTokenSymbol: "USDC",
+        amountPercentage: exitPercentage,
+        maxSlippage: 1.0,
+      };
+
+      const result = await this.enzymeService.executeAutomatedSwap(
+        this.vaultAddress,
+        swapStrategy
+      );
+
+      // Update position tracking
+      position.remainingAmount = (position.remainingAmount || 0) - amountToExit;
+      position.updatedAt = new Date();
+
+      // Add to exit history
+      const targetExit = {
+        targetIndex: targetHit - 1,
+        targetPrice: position.signal.targets[targetHit - 1],
+        actualExitPrice: exitPrice,
+        amountExited: amountToExit,
+        percentage: exitPercentage,
+        timestamp: new Date(),
+        txHash: result.hash,
+      };
+
+      if (!position.targetExitHistory) position.targetExitHistory = [];
+      position.targetExitHistory.push(targetExit);
+
+      logger.info(`🎯 Partial exit executed successfully!`, {
+        positionId: position.id,
+        targetHit,
+        exitPercentage,
+        amountExited: amountToExit,
+        remainingAmount: position.remainingAmount,
+        txHash: result.hash,
+      });
+
+      // If remaining amount is very small, close the position
+      if (position.remainingAmount < 0.01 || exitPercentage >= 100) {
+        position.status = PositionStatus.CLOSED;
+        position.exitExecuted = true;
+        position.exitTxHash = result.hash;
+        this.activePositions.delete(position.id);
+
+        logger.info(`🏁 Position fully closed after target exits`, {
+          positionId: position.id,
+        });
+      }
+    } catch (error) {
+      logger.error(
+        `🚨 Error executing partial exit for position ${position.id}:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Execute full exit of a position
+   */
+  private async executeFullExit(
+    position: Position,
+    exitPrice: number,
+    reason: string
+  ): Promise<void> {
+    try {
+      const exitResult = await this.executeTradeExit(position, exitPrice);
+
+      if (exitResult.success) {
+        position.status = reason.includes("time")
+          ? PositionStatus.EXPIRED
+          : PositionStatus.CLOSED;
+        position.exitTxHash = exitResult.txHash;
+        position.exitExecuted = true;
+        position.updatedAt = new Date();
+
+        // Remove from active positions
+        this.activePositions.delete(position.id);
+
+        logger.info(`🏁 Full exit executed successfully`, {
+          positionId: position.id,
+          reason,
+          exitPrice,
+          txHash: exitResult.txHash,
+        });
+      } else {
+        logger.error(
+          `🚨 Full exit failed for position ${position.id}:`,
+          exitResult.error
+        );
+      }
+    } catch (error) {
+      logger.error(
+        `🚨 Error executing full exit for position ${position.id}:`,
+        error
+      );
     }
   }
 
@@ -229,23 +460,38 @@ export class GameEngineService {
               swapParams
             );
 
-            // Create position
+            // Create position object with enhanced tracking
             const position: Position = {
               id: `pos_${Date.now()}`,
               signal,
-              trailingStop: TrailingStopService.createTrailingStopConfig(),
+              trailingStop: TrailingStopService.createTrailingStopConfig(
+                signal.targets?.length || 2,
+                undefined,
+                undefined // Use default exit percentages for now
+              ),
               currentPrice: parseFloat(result.swapDetails.expectedOutput),
               entryExecuted: true,
               exitExecuted: false,
               status: PositionStatus.ACTIVE,
               createdAt: new Date(),
               updatedAt: new Date(),
+              entryTxHash: result.hash,
+              actualEntryPrice: parseFloat(result.swapDetails.swapAmount),
+              amountSwapped: parseFloat(result.swapDetails.swapAmount),
+              tokenAmountReceived: parseFloat(
+                result.swapDetails.expectedOutput
+              ),
+              remainingAmount: parseFloat(result.swapDetails.expectedOutput), // Initially 100% remaining
+              targetExitHistory: [], // No exits yet
             };
 
+            // Add to active positions tracking
             this.activePositions.set(position.id, position);
-            this.trailingStopService.addPosition(position);
 
-            logger(`Trade entry executed successfully: ${result.hash}`);
+            logger(
+              `🤖 GameEngine: Position created and added to monitoring - ID: ${position.id}, Max Exit: ${signal.maxExitTime}, Total Active: ${this.activePositions.size}`
+            );
+
             return new ExecutableGameFunctionResponse(
               ExecutableGameFunctionStatus.Done,
               `Trade entry executed: ${signal.signal} ${signal.token} with size $${positionSize}. TX: ${result.hash}`
@@ -407,7 +653,7 @@ export class GameEngineService {
     try {
       // Get current position size (simplified - in practice you'd track this)
       const signerAddress = await this.signer.getAddress();
-      const tokenAddress = position.signal.token;
+      const tokenAddress: any = position.signal.tokenMentioned;
 
       // For now, we'll use a placeholder. In practice, you'd need to track the actual token holdings
       const swapParams: SwapStrategy = {
@@ -497,14 +743,18 @@ export class GameEngineService {
    */
   async processTradingSignal(signal: TradingSignal): Promise<Position | null> {
     try {
-      logger.info("Processing trading signal with Game Engine:", {
+      logger.info("🤖 GameEngine: Processing trading signal", {
         type: signal.signal,
-        symbol: signal.token,
+        token: signal.token,
+        tokenId: signal.tokenId,
+        currentPrice: signal.currentPrice,
+        targets: signal.targets,
+        maxExitTime: signal.maxExitTime,
       });
 
-      // Get current price for context
+      // Get current price for context using tokenId for CoinGecko
       const currentPrice = await this.coinGeckoService.getTokenPrice(
-        signal.token
+        signal.tokenId
       );
 
       // Create AI context for decision making
@@ -513,23 +763,40 @@ export class GameEngineService {
         currentPrice,
         marketData: {
           symbol: signal.token,
-          price: currentPrice?.current_price || 0,
+          tokenId: signal.tokenId,
+          price: currentPrice?.current_price || signal.currentPrice,
           timestamp: new Date().toISOString(),
         },
       };
 
+      logger.info("🤖 GameEngine: Making AI decision...", {
+        currentMarketPrice: currentPrice?.current_price,
+        signalPrice: signal.currentPrice,
+        priceChange24h: currentPrice?.price_change_percentage_24h,
+      });
+
       // Use Game Engine AI to make trading decision
       const decision = await this.makeAIDecision(aiContext);
 
+      logger.info("🤖 GameEngine: AI Decision made", {
+        shouldExecute: decision.shouldExecute,
+        reason: decision.reason,
+        confidence: decision.confidence,
+      });
+
       if (!decision.shouldExecute) {
-        logger.info("AI decided not to execute trade:", decision.reason);
+        logger.info(
+          "🤖 GameEngine: AI decided not to execute trade:",
+          decision.reason
+        );
         return null;
       }
 
       // Execute the trade based on signal type
+      logger.info("🤖 GameEngine: Executing trade...");
       return await this.executeTrade(signal, decision);
     } catch (error) {
-      logger.error("Error processing trading signal:", error);
+      logger.error("🤖 GameEngine: Error processing trading signal:", error);
       throw error;
     }
   }
@@ -545,8 +812,15 @@ export class GameEngineService {
       // For now, implementing basic logic that would be enhanced with AI
       const { signal, currentPrice } = context;
 
+      logger.debug("🤖 GameEngine: Analyzing signal...", {
+        signalType: signal.signal,
+        targets: signal.targets,
+        stopLoss: signal.stopLoss,
+        maxExitTime: signal.maxExitTime,
+      });
+
       // Basic decision logic (would be replaced with actual AI)
-      if (signal.signal === SignalType.HOLD) {
+      if (signal.signal.toLowerCase() === "hold") {
         return {
           shouldExecute: false,
           reason: "Signal indicates HOLD position",
@@ -554,15 +828,36 @@ export class GameEngineService {
         };
       }
 
-      // Check if we have valid price targets
-      if (signal.targets?.tp1 && signal.stopLoss) {
-        const currentMarketPrice = currentPrice?.current_price || 0;
-        const potentialGain =
-          ((signal.targets.tp1 - currentMarketPrice) / currentMarketPrice) *
-          100;
+      // Check if maxExitTime is too soon (less than 1 hour from now)
+      const exitTime = new Date(signal.maxExitTime);
+      const now = new Date();
+      const hoursUntilExit =
+        (exitTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
-        if (potentialGain > 5) {
-          // Minimum 5% gain threshold
+      if (hoursUntilExit < 0.1) {
+        return {
+          shouldExecute: false,
+          reason: `Max exit time too soon: ${hoursUntilExit.toFixed(2)} hours`,
+          confidence: 0.9,
+        };
+      }
+
+      // Check if we have valid price targets
+      if (signal.targets && signal.targets.length > 0 && signal.stopLoss) {
+        const currentMarketPrice =
+          currentPrice?.current_price || signal.currentPrice;
+        const firstTarget = signal.targets[0];
+        const potentialGain =
+          ((firstTarget - currentMarketPrice) / currentMarketPrice) * 100;
+
+        logger.debug("🤖 GameEngine: Potential gain analysis", {
+          currentMarketPrice,
+          firstTarget,
+          potentialGain: potentialGain.toFixed(2) + "%",
+        });
+
+        if (potentialGain > 3) {
+          // Minimum 3% gain threshold
           return {
             shouldExecute: true,
             reason: `Potential gain of ${potentialGain.toFixed(2)}% meets threshold`,
@@ -577,12 +872,119 @@ export class GameEngineService {
         confidence: 0.6,
       };
     } catch (error) {
-      logger.error("Error in AI decision making:", error);
+      logger.error("🤖 GameEngine: Error in AI decision making:", error);
       return {
         shouldExecute: false,
         reason: "AI decision error",
         confidence: 0.0,
       };
+    }
+  }
+
+  /**
+   * Execute a trade based on the signal and AI decision
+   */
+  private async executeTrade(
+    signal: TradingSignal,
+    decision: any
+  ): Promise<Position> {
+    try {
+      logger.info("🤖 GameEngine: Preparing trade execution...", {
+        signal: signal.signal,
+        token: signal.token,
+        tokenId: signal.tokenId,
+      });
+
+      // Extract token symbol from token field (e.g., "COS (contentos)" -> "COS")
+      const tokenMatch = signal.token.match(/^([A-Z]+)/);
+      // const tokenSymbol = tokenMatch
+      //   ? tokenMatch[1]
+      //   : signal.tokenMentioned || "UNKNOWN";
+      const tokenSymbol: any = signal.tokenMentioned;
+
+      let swapStrategy: SwapStrategy;
+
+      // Create swap strategy based on signal type - always 10% of USDC
+      if (signal.signal.toLowerCase() === "buy") {
+        // Buy signal: swap from USDC to target token
+        swapStrategy = {
+          fromTokenSymbol: "USDC",
+          toTokenSymbol: tokenSymbol,
+          amountPercentage: 10, // Fixed 10% as requested
+          maxSlippage: 1.0,
+        };
+      } else if (signal.signal.toLowerCase() === "put options") {
+        // Put options signal: this is more complex, for now we'll implement as a sell
+        swapStrategy = {
+          fromTokenSymbol: tokenSymbol,
+          toTokenSymbol: "USDC",
+          amountPercentage: 10, // Fixed 10% as requested
+          maxSlippage: 1.0,
+        };
+      } else {
+        throw new Error(`Unsupported signal type: ${signal.signal}`);
+      }
+
+      logger.info("🤖 GameEngine: Executing swap...", {
+        from: swapStrategy.fromTokenSymbol,
+        to: swapStrategy.toTokenSymbol,
+        percentage: swapStrategy.amountPercentage + "%",
+      });
+
+      // Execute the swap through Enzyme
+      const result = await this.enzymeService.executeAutomatedSwap(
+        this.vaultAddress,
+        swapStrategy
+      );
+
+      // Serialize swap details properly by converting BigInt values to strings
+      const serializedSwapDetails = this.serializeSwapDetails(
+        result.swapDetails
+      );
+
+      logger.info("🤖 GameEngine: Trade executed successfully!", {
+        signal: signal.signal,
+        symbol: signal.token,
+        txHash: result.hash,
+        swapDetails: serializedSwapDetails,
+      });
+
+      // Create position object with enhanced tracking
+      const position: Position = {
+        id: `pos_${Date.now()}`,
+        signal,
+        trailingStop: TrailingStopService.createTrailingStopConfig(
+          signal.targets?.length || 2,
+          undefined,
+          undefined // Use default exit percentages for now
+        ),
+        currentPrice: parseFloat(result.swapDetails.expectedOutput),
+        entryExecuted: true,
+        exitExecuted: false,
+        status: PositionStatus.ACTIVE,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        entryTxHash: result.hash,
+        actualEntryPrice: parseFloat(result.swapDetails.swapAmount),
+        amountSwapped: parseFloat(result.swapDetails.swapAmount),
+        tokenAmountReceived: parseFloat(result.swapDetails.expectedOutput),
+        remainingAmount: parseFloat(result.swapDetails.expectedOutput), // Initially 100% remaining
+        targetExitHistory: [], // No exits yet
+      };
+
+      // Add to active positions tracking
+      this.activePositions.set(position.id, position);
+
+      logger.info("🤖 GameEngine: Position created and added to monitoring", {
+        positionId: position.id,
+        maxExitTime: signal.maxExitTime,
+        totalActivePositions: this.activePositions.size,
+      });
+
+      return position;
+    } catch (error) {
+      logger.error("🤖 GameEngine: Error executing trade:", error);
+      throw error;
     }
   }
 
@@ -607,121 +1009,77 @@ export class GameEngineService {
   }
 
   /**
-   * Execute a trade based on the signal and AI decision
+   * Check position for all exit conditions (trailing stop + time-based)
    */
-  private async executeTrade(
-    signal: TradingSignal,
-    decision: any
-  ): Promise<Position> {
+  private async checkPositionExitConditions(
+    position: Position,
+    currentPrice?: number
+  ): Promise<void> {
     try {
-      let swapStrategy: SwapStrategy;
+      // Check time-based exit first
+      const now = new Date();
+      const maxExitTime = new Date(position.signal.maxExitTime);
 
-      // Create swap strategy based on signal type
-      if (signal.signal === SignalType.BUY) {
-        // Buy signal: swap from stablecoin to target token
-        swapStrategy = {
-          fromTokenSymbol: "USDC",
-          toTokenSymbol: this.getTokenSymbol(signal.token),
-          amountPercentage: this.calculatePositionSize(
-            signal,
-            decision.confidence
-          ),
-          maxSlippage: 1.0,
-        };
-      } else if (signal.signal === SignalType.PUT_OPTIONS) {
-        // Put options signal: this is more complex, for now we'll implement as a sell
-        swapStrategy = {
-          fromTokenSymbol: this.getTokenSymbol(signal.token),
-          toTokenSymbol: "USDC",
-          amountPercentage: this.calculatePositionSize(
-            signal,
-            decision.confidence
-          ),
-          maxSlippage: 1.0,
-        };
-      } else {
-        throw new Error(`Unsupported signal type: ${signal.signal}`);
+      if (now >= maxExitTime) {
+        logger.info("🤖 GameEngine: Max exit time reached for position", {
+          positionId: position.id,
+          maxExitTime: position.signal.maxExitTime,
+        });
+
+        await this.executeTimeBasedExit(position);
+        return;
       }
 
-      // Execute the swap through Enzyme
-      const result = await this.enzymeService.executeAutomatedSwap(
-        this.vaultAddress,
-        swapStrategy
+      // Check trailing stop conditions
+      await this.checkTrailingStop(position, currentPrice);
+    } catch (error) {
+      logger.error(
+        "🤖 GameEngine: Error checking position exit conditions:",
+        error
       );
+    }
+  }
 
-      // Serialize swap details properly by converting BigInt values to strings
-      const serializedSwapDetails = this.serializeSwapDetails(
-        result.swapDetails
-      );
-
-      logger.info("Trade executed successfully:", {
-        signal: signal.signal,
-        symbol: signal.token,
-        txHash: result.hash,
-        swapDetails: serializedSwapDetails,
+  /**
+   * Execute time-based exit when maxExitTime is reached
+   */
+  private async executeTimeBasedExit(position: Position): Promise<void> {
+    try {
+      logger.info("🤖 GameEngine: Executing time-based exit...", {
+        positionId: position.id,
+        token: position.signal.token,
       });
 
-      // Create position object
-      const position: Position = {
-        id: `pos_${Date.now()}`,
-        signal,
-        trailingStop: TrailingStopService.createTrailingStopConfig(),
-        currentPrice: parseFloat(result.swapDetails.expectedOutput),
-        entryExecuted: true,
-        exitExecuted: false,
-        status: PositionStatus.ACTIVE,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      // Get current price for exit
+      const currentPrice = await this.coinGeckoService.getTokenPrice(
+        position.signal.tokenId
+      );
+      const exitPrice = currentPrice?.current_price || position.currentPrice;
 
-      return position;
+      const exitResult = await this.executeTradeExit(position, exitPrice);
+
+      if (exitResult.success) {
+        position.status = PositionStatus.EXPIRED;
+        position.exitTxHash = exitResult.txHash;
+        position.updatedAt = new Date();
+
+        // Remove from active positions
+        this.activePositions.delete(position.id);
+
+        logger.info("🤖 GameEngine: Time-based exit executed successfully", {
+          positionId: position.id,
+          exitPrice,
+          txHash: exitResult.txHash,
+        });
+      } else {
+        logger.error("🤖 GameEngine: Time-based exit failed", {
+          positionId: position.id,
+          error: exitResult.error,
+        });
+      }
     } catch (error) {
-      logger.error("Error executing trade:", error);
-      throw error;
+      logger.error("🤖 GameEngine: Error in time-based exit:", error);
     }
-  }
-
-  /**
-   * Calculate position size based on signal confidence and risk management
-   */
-  private calculatePositionSize(
-    signal: TradingSignal,
-    confidence: number
-  ): number {
-    // Base position size as percentage of portfolio
-    const baseSize = 10; // 10% base
-
-    // Adjust based on confidence (0.5 to 1.5 multiplier)
-    const confidenceMultiplier = 0.5 + confidence;
-
-    // Adjust based on signal strength (if available)
-    let signalMultiplier = 1.0;
-    if (signal.targets?.tp1 && signal.stopLoss) {
-      const riskRewardRatio =
-        (signal.targets.tp1 - signal.stopLoss) / Math.abs(signal.stopLoss);
-      signalMultiplier = Math.min(1.5, Math.max(0.5, riskRewardRatio / 2));
-    }
-
-    const positionSize = baseSize * confidenceMultiplier * signalMultiplier;
-
-    // Cap at maximum 25% of portfolio
-    return Math.min(25, Math.max(5, positionSize));
-  }
-
-  /**
-   * Convert symbol to standard token symbol
-   */
-  private getTokenSymbol(symbol: string): string {
-    // Map common symbols to token symbols
-    const symbolMap: Record<string, string> = {
-      ethereum: "WETH",
-      bitcoin: "WBTC",
-      arbitrum: "ARB",
-      "usd-coin": "USDC",
-      tether: "USDT",
-    };
-
-    return symbolMap[symbol.toLowerCase()] || symbol.toUpperCase();
   }
 
   /**
@@ -729,9 +1087,8 @@ export class GameEngineService {
    */
   async getCurrentPositions(): Promise<Position[]> {
     try {
-      // This would integrate with vault to get current token holdings
-      // For now, return empty array
-      return [];
+      // Return active positions from our tracking
+      return Array.from(this.activePositions.values());
     } catch (error) {
       logger.error("Error getting current positions:", error);
       throw error;
@@ -755,23 +1112,42 @@ export class GameEngineService {
   /**
    * Check if position should be closed due to trailing stop
    */
-  private async checkTrailingStop(position: Position): Promise<void> {
+  private async checkTrailingStop(
+    position: Position,
+    providedPrice?: number
+  ): Promise<void> {
     try {
-      // Convert token symbol to CoinGecko ID for price lookup
-      const coinGeckoId = this.getCoinGeckoId(position.signal.token);
-      const currentPrice =
-        await this.coinGeckoService.getTokenPrice(coinGeckoId);
+      let currentPrice: number;
+
+      if (providedPrice !== undefined) {
+        currentPrice = providedPrice;
+      } else {
+        // Convert token symbol to CoinGecko ID for price lookup
+        const coinGeckoId = this.getCoinGeckoId(position.signal.tokenId);
+        const priceData =
+          await this.coinGeckoService.getTokenPrice(coinGeckoId);
+        currentPrice = priceData?.current_price || position.currentPrice;
+      }
 
       // Implement trailing stop logic here
       // This would check if price has retraced 1% from peak after hitting TP1
 
-      logger.debug(`Checking trailing stop for ${position.signal.token}:`, {
-        currentPrice: currentPrice?.current_price,
-        entryPrice: position.currentPrice,
-        tp1: position.signal.targets?.tp1,
-      });
+      const firstTarget =
+        position.signal.targets && position.signal.targets.length > 0
+          ? position.signal.targets[0]
+          : null;
+
+      logger.debug(
+        `🤖 GameEngine: Checking trailing stop for ${position.signal.token}`,
+        {
+          currentPrice,
+          entryPrice: position.currentPrice,
+          firstTarget,
+          maxExitTime: position.signal.maxExitTime,
+        }
+      );
     } catch (error) {
-      logger.error("Error checking trailing stop:", error);
+      logger.error("🤖 GameEngine: Error checking trailing stop:", error);
     }
   }
 

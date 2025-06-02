@@ -101,20 +101,40 @@ app.get("/config", (req, res) => {
  */
 app.post("/signal", async (req, res) => {
   try {
-    const { signal } = await req.body;
+    const { signal, signal_data } = await req.body;
 
-    if (!signal) {
-      return res.status(400).json({ error: "Signal is required" });
+    if (!signal && !signal_data) {
+      return res.status(400).json({
+        error: "Either 'signal' (string) or 'signal_data' (object) is required",
+      });
     }
 
-    logger.info("Received trading signal:", signal);
+    logger.info("Received trading signal:", {
+      type: signal_data ? "object" : "string",
+      data: signal_data || signal,
+    });
 
-    // Parse the signal
-    const parsedSignal = SignalParser.parseSignal(signal);
+    let parsedSignal: TradingSignal | null = null;
+
+    // Handle new object format
+    if (signal_data) {
+      parsedSignal = SignalParser.parseSignalObject(signal_data);
+    }
+    // Handle legacy string format
+    else if (signal) {
+      parsedSignal = SignalParser.parseSignal(signal);
+    }
 
     if (!parsedSignal) {
       return res.status(400).json({ error: "Invalid signal format" });
     }
+
+    logger.info("Signal parsed successfully:", {
+      token: parsedSignal.token,
+      tokenId: parsedSignal.tokenId,
+      signal: parsedSignal.signal,
+      maxExitTime: parsedSignal.maxExitTime,
+    });
 
     // Process signal with Game Engine AI
     const position = await gameEngineService.processTradingSignal(parsedSignal);
@@ -131,6 +151,9 @@ app.post("/signal", async (req, res) => {
           signal: position.signal,
           status: position.status,
           createdAt: position.createdAt,
+          entryTxHash: position.entryTxHash,
+          actualEntryPrice: position.actualEntryPrice,
+          amountSwapped: position.amountSwapped,
         },
       });
     } else {
