@@ -272,7 +272,7 @@ export const UNISWAP_V3_FEE_TIERS = {
 };
 
 // Token addresses on Arbitrum
-const TOKEN_ADDRESSES: Record<string, string> = {
+export const TOKEN_ADDRESSES: Record<string, string> = {
   // Aave Arbitrum Tokens
   AARBAAVE: "0xf329e36c7bf6e5e86ce2150875a84ce77f477375",
   AARBARB: "0x6533afac2e7bccb20dca161449a13a32d391fb00",

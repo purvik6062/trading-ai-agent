@@ -25,7 +25,8 @@
     "test:monitor": "node test-individual.js monitor",
     "test:menu": "node test-individual.js",
     "test:all": "npm run test:legacy && npm run test:multi",
-    "test:demo": "npm run test:connection && npm run test:single && npm run test:status"
+    "test:demo": "npm run test:connection && npm run test:single && npm run test:status",
+    "test:signal-listener": "npm run build && node test-signal-listener.js"
   },
   "keywords": [
     "trading",
@@ -40,13 +41,15 @@
   "license": "MIT",
   "dependencies": {
     "@enzymefinance/sdk": "^1.0.0",
+    "@types/mongodb": "^4.0.7",
     "@virtuals-protocol/game": "^0.1.14",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "winston": "^3.11.0",
-    "node-cron": "^3.0.3",
     "ethers": "^6.8.1",
+    "express": "^4.18.2",
+    "mongodb": "^6.17.0",
+    "node-cron": "^3.0.3",
+    "winston": "^3.11.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {

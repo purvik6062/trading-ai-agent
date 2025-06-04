@@ -62,6 +62,15 @@ export const config = {
     level: process.env.LOG_LEVEL || "info",
     file: process.env.LOG_FILE || "logs/app.log",
   },
+
+  // MongoDB Configuration
+  mongodb: {
+    uri: process.env.MONGODB_URI,
+    databaseName: process.env.MONGODB_DATABASE || "ctxbt-signal-flow",
+    collectionName: process.env.MONGODB_COLLECTION || "trading-signals",
+    // Target subscriber to filter for (will be dynamic later)
+    targetSubscriber: "abhidavinci",
+  },
 };
 
 // Validate required environment variables

@@ -10,6 +10,7 @@ import { CoinGeckoService } from "./services/coinGeckoService";
 import { TrailingStopService } from "./services/trailingStopService";
 import { SignalParser } from "./utils/signalParser";
 import { TradingSignal, SignalType } from "./types/trading";
+import { SignalListenerService } from "./services/signalListenerService";
 import { ethers } from "ethers";
 
 const app = express();
@@ -24,6 +25,65 @@ let gameEngineService: GameEngineService;
 let coinGeckoService: CoinGeckoService;
 let trailingStopService: TrailingStopService;
 let signalParser: SignalParser;
+let signalListenerService: SignalListenerService;
+
+/**
+ * Process a trading signal from MongoDB - integrates with existing game engine service
+ */
+async function processMongoSignal(signalData: any): Promise<void> {
+  try {
+    logger.info("🚀 Processing MongoDB trading signal:", {
+      token: signalData.tokenMentioned,
+      signal: signalData.signal,
+      currentPrice: signalData.currentPrice,
+      targets: signalData.targets,
+      stopLoss: signalData.stopLoss,
+      twitterHandle: signalData.twitterHandle,
+      tweet_id: signalData.tweet_id,
+    });
+
+    // Convert MongoDB signal data to TradingSignal format
+    const parsedSignal: TradingSignal = {
+      token: signalData.token,
+      tokenId: signalData.tokenId,
+      signal: signalData.signal,
+      currentPrice: signalData.currentPrice,
+      targets: signalData.targets,
+      stopLoss: signalData.stopLoss,
+      timeline: signalData.timeline,
+      maxExitTime: signalData.maxExitTime,
+      tradeTip: signalData.tradeTip,
+      tweet_id: signalData.tweet_id,
+      tweet_link: signalData.tweet_link,
+      tweet_timestamp: signalData.tweet_timestamp,
+      twitterHandle: signalData.twitterHandle,
+      priceAtTweet: signalData.priceAtTweet,
+      tokenMentioned: signalData.tokenMentioned,
+    };
+
+    // Process signal with Game Engine AI (same as REST endpoint)
+    const position = await gameEngineService.processTradingSignal(parsedSignal);
+
+    if (position) {
+      // Add to trailing stop monitoring
+      trailingStopService.addPosition(position);
+
+      logger.info("✅ MongoDB signal processed and trade executed:", {
+        positionId: position.id,
+        status: position.status,
+        entryPrice: position.actualEntryPrice,
+        amountSwapped: position.amountSwapped,
+      });
+    } else {
+      logger.info(
+        "✅ MongoDB signal processed but no trade executed (AI decision)"
+      );
+    }
+  } catch (error) {
+    logger.error("❌ Error processing MongoDB signal:", error);
+    throw error;
+  }
+}
 
 // Initialize services on startup
 async function initializeServices() {
@@ -53,6 +113,20 @@ async function initializeServices() {
     trailingStopService = new TrailingStopService();
     signalParser = new SignalParser();
 
+    // Initialize MongoDB Signal Listener Service
+    if (config.mongodb.uri) {
+      signalListenerService = new SignalListenerService(processMongoSignal);
+      await signalListenerService.connect();
+      await signalListenerService.startListening();
+      logger.info(
+        "✅ MongoDB Signal Listener Service initialized and listening"
+      );
+    } else {
+      logger.warn(
+        "⚠️ MongoDB URI not configured, signal listener service disabled"
+      );
+    }
+
     logger.info("All services initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize services:", error);
@@ -66,6 +140,10 @@ async function initializeServices() {
  * Health check endpoint
  */
 app.get("/health", (req, res) => {
+  const signalListenerStatus = signalListenerService
+    ? signalListenerService.getStatus()
+    : null;
+
   res.json({
     status: "healthy",
     timestamp: new Date().toISOString(),
@@ -74,6 +152,11 @@ app.get("/health", (req, res) => {
       gameEngine: !!gameEngineService,
       coinGecko: !!coinGeckoService,
       trailingStop: !!trailingStopService,
+      signalListener: {
+        enabled: !!signalListenerService,
+        connected: signalListenerStatus?.connected || false,
+        listening: signalListenerStatus?.listening || false,
+      },
     },
   });
 });
@@ -92,6 +175,12 @@ app.get("/config", (req, res) => {
     trailingStop: {
       enabled: config.trailingStop.enabled,
       percentage: config.trailingStop.percentage,
+    },
+    signalListener: {
+      enabled: !!config.mongodb.uri,
+      database: config.mongodb.databaseName,
+      collection: config.mongodb.collectionName,
+      targetSubscriber: config.mongodb.targetSubscriber,
     },
   });
 });
@@ -322,14 +411,26 @@ async function startServer() {
 }
 
 // Handle graceful shutdown
-process.on("SIGINT", () => {
-  logger.info("Received SIGINT, shutting down gracefully...");
-  process.exit(0);
-});
+async function gracefulShutdown(signal: string) {
+  logger.info(`Received ${signal}, shutting down gracefully...`);
 
-process.on("SIGTERM", () => {
-  logger.info("Received SIGTERM, shutting down gracefully...");
-  process.exit(0);
-});
+  try {
+    // Cleanup signal listener service
+    if (signalListenerService) {
+      await signalListenerService.stopListening();
+      await signalListenerService.disconnect();
+      logger.info("✅ Signal listener service stopped");
+    }
+
+    logger.info("👋 Graceful shutdown completed");
+    process.exit(0);
+  } catch (error) {
+    logger.error("❌ Error during shutdown:", error);
+    process.exit(1);
+  }
+}
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 startServer();
