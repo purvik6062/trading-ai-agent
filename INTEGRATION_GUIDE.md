@@ -8,15 +8,15 @@ This guide explains how to integrate the **Trading AI Agent Service** with your 
 
 ```
 ┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐
-│   Next.js App   │────│ Trading AI Service   │────│   MongoDB       │
-│  (Frontend)     │    │   (Express.js)       │    │ trading-signals │
-└─────────────────┘    └──────────────────────┘    └─────────────────┘
-        │                         │
-        │                         │
+│   Next.js App   │────│ Trading AI Service   │────│     MongoDB     │
+│  (Frontend)     │    │   (Express.js)       │    │ • trading-signals│
+└─────────────────┘    └──────────────────────┘    │ • user_mappings  │
+        │                         │                 │ • user_settings  │
+        │                         │                 └─────────────────┘
         ▼                         ▼
 ┌─────────────────┐    ┌──────────────────────┐
-│  User Database  │    │   Enzyme Vaults      │
-│ (User Mappings) │    │   (On-chain)         │
+│ Your Next.js DB │    │   Enzyme Vaults      │
+│ (User Profiles) │    │   (On-chain)         │
 └─────────────────┘    └──────────────────────┘
 ```
 
@@ -27,17 +27,42 @@ This guide explains how to integrate the **Trading AI Agent Service** with your 
 1. **Environment Setup**
 
 ```bash
-# Required environment variables
+# Required environment variables (.env file)
+NODE_ENV=development
+PORT=3000
+
+# MongoDB Configuration (same database as your signals)
 MONGODB_URI=mongodb://your-mongodb-uri
-GAME_ENGINE_API_KEY=your-game-engine-key
+MONGODB_DATABASE=ctxbt-signal-flow
+MONGODB_COLLECTION=trading-signals
+
+# Blockchain Configuration
 RPC_URL=https://arb1.arbitrum.io/rpc
+PRIVATE_KEY=0x... # Your delegated private key for vault operations
+
+# Game Engine Configuration
+GAME_ENGINE_API_KEY=your-game-engine-api-key
+GAME_ENGINE_BASE_URL=https://api.gameengine.ai
+
+# Optional: API Security
+API_SECRET_KEY=your-api-secret-key
 ```
 
-2. **Start the Service**
+2. **Install & Start the Service**
 
 ```bash
+# Install dependencies
+npm install
+
+# Build the project
+npm run build
+
+# Start the service
 npm start
 # Service runs on http://localhost:3000
+
+# Check health
+curl http://localhost:3000/health
 ```
 
 ### Step 2: Update Your Next.js App
@@ -262,31 +287,35 @@ export function TradingDashboard({ username }: TradingDashboardProps) {
 }
 ```
 
-### Step 3: Database Schema Updates
+### Step 3: MongoDB Collections Setup
 
-#### 3.1 Add Trading Fields to User/Vault Tables
+The trading service uses **MongoDB for everything** (same database as your trading signals):
+
+#### 3.1 Automatic Collections Created
+
+The service automatically creates these collections in your existing MongoDB:
+
+- ✅ `trading-signals` (your existing collection)
+- ✅ `user_vault_mappings` (new - maps usernames to vault addresses)
+- ✅ `user_trading_settings` (new - optional user preferences)
+
+#### 3.2 Update Your Next.js Database (Optional)
+
+You may want to track which users have automated trading enabled:
 
 ```sql
--- Add to your user or vault table
+-- Add to your existing user table
 ALTER TABLE users ADD COLUMN automated_trading_enabled BOOLEAN DEFAULT false;
-ALTER TABLE users ADD COLUMN trading_service_username VARCHAR(255);
 ALTER TABLE users ADD COLUMN trading_service_registered_at TIMESTAMP;
-
--- Or create a separate table for trading settings
-CREATE TABLE user_trading_settings (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER REFERENCES users(id),
-  vault_address VARCHAR(255) NOT NULL,
-  automated_trading_enabled BOOLEAN DEFAULT false,
-  trading_service_registered BOOLEAN DEFAULT false,
-  registered_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
 ```
+
+**Note:** The trading service stores its own user mappings in MongoDB, so this is just for your Next.js app's reference.
 
 ### Step 4: MongoDB Signal Integration
 
-Your MongoDB `trading-signals` collection should have this structure:
+#### 4.1 Your Existing Trading Signals Collection
+
+Your existing `trading-signals` collection works as-is:
 
 ```javascript
 {
@@ -304,8 +333,36 @@ Your MongoDB `trading-signals` collection should have this structure:
   "subscribers": [
     { "username": "user1", "sent": false },
     { "username": "user2", "sent": false },
-    // Add usernames of users who should receive this signal
+    // Add usernames of registered users who should receive signals
   ]
+}
+```
+
+#### 4.2 New User Collections (Auto-Created)
+
+**`user_vault_mappings`** - Maps users to their vaults:
+
+```javascript
+{
+  "_id": "...",
+  "username": "user1",
+  "vaultAddress": "0x1234567890123456789012345678901234567890",
+  "isActive": true,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+**`user_trading_settings`** - Optional user preferences:
+
+```javascript
+{
+  "_id": "...",
+  "username": "user1",
+  "enableAutomatedTrading": true,
+  "maxPositionSize": 10.0,
+  "riskLevel": "medium",
+  // ... other settings
 }
 ```
 
@@ -514,6 +571,31 @@ curl -X POST http://localhost:3000/users/testuser/signal \
   }'
 ```
 
+## ✅ Quick Integration Checklist
+
+### **Before Integration:**
+
+- [ ] MongoDB is accessible with trading signals collection
+- [ ] Game Engine API key is working
+- [ ] Delegated private key has vault permissions
+- [ ] Trading service starts successfully (`npm start`)
+- [ ] Health endpoint returns healthy status
+
+### **Integration Steps:**
+
+- [ ] Add `TradingServiceClient` to your Next.js app
+- [ ] Update vault creation to register users
+- [ ] Add trading dashboard component
+- [ ] Test user registration API
+- [ ] Test signal processing for registered users
+
+### **Production Deployment:**
+
+- [ ] Follow the `DEPLOYMENT_GUIDE.md`
+- [ ] Set up monitoring and alerts
+- [ ] Configure SSL and domain
+- [ ] Test with real trading signals
+
 ## 🤝 Next Steps
 
 1. **Deploy the Trading Service** on your infrastructure
@@ -521,5 +603,11 @@ curl -X POST http://localhost:3000/users/testuser/signal \
 3. **Test with a few users** in staging environment
 4. **Monitor and optimize** performance
 5. **Scale horizontally** as user base grows
+
+## 📚 Additional Resources
+
+- 📖 **`DEPLOYMENT_GUIDE.md`** - Complete production deployment guide
+- 🗄️ **`database/mongodb-setup.md`** - MongoDB collections reference
+- 🔧 **API Endpoints** - All available endpoints documented above
 
 The trading service is now ready for production use with multi-user support! 🎉

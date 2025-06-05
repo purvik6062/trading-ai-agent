@@ -66,11 +66,15 @@ export class SignalListenerService {
   private changeStream: ChangeStream | null = null;
   private isConnected = false;
   private processSignalCallback?: (
-    signalData: ProcessedSignalData
+    signalData: ProcessedSignalData,
+    subscribers: Array<{ username: string; sent: boolean }>
   ) => Promise<void>;
 
   constructor(
-    processSignalCallback?: (signalData: ProcessedSignalData) => Promise<void>
+    processSignalCallback?: (
+      signalData: ProcessedSignalData,
+      subscribers: Array<{ username: string; sent: boolean }>
+    ) => Promise<void>
   ) {
     this.processSignalCallback = processSignalCallback;
     logger.info("SignalListenerService initialized");
@@ -129,18 +133,6 @@ export class SignalListenerService {
   }
 
   /**
-   * Check if the subscriber is in the document's subscribers array
-   */
-  private hasTargetSubscriber(
-    subscribers: Array<{ username: string; sent: boolean }>,
-    targetUsername: string
-  ): boolean {
-    return subscribers.some(
-      (subscriber) => subscriber.username === targetUsername
-    );
-  }
-
-  /**
    * Check if the token is allowed for trading
    */
   private isTokenAllowed(tokenMentioned: string): boolean {
@@ -156,9 +148,12 @@ export class SignalListenerService {
   }
 
   /**
-   * Process a valid trading signal by forwarding it to the processSignal function
+   * Process trading signal
    */
-  private async processSignal(signalData: ProcessedSignalData): Promise<void> {
+  private async processSignal(
+    signalData: ProcessedSignalData,
+    subscribers: Array<{ username: string; sent: boolean }>
+  ): Promise<void> {
     try {
       logger.info("Processing valid trading signal:", {
         tokenMentioned: signalData.tokenMentioned,
@@ -166,11 +161,12 @@ export class SignalListenerService {
         currentPrice: signalData.currentPrice,
         twitterHandle: signalData.twitterHandle,
         tweet_id: signalData.tweet_id,
+        subscribersCount: subscribers.length,
       });
 
       // Call the external processSignal function if provided
       if (this.processSignalCallback) {
-        await this.processSignalCallback(signalData);
+        await this.processSignalCallback(signalData, subscribers);
       } else {
         // Default logging if no callback is set
         console.log("🚀 Processing Signal:", {
@@ -180,6 +176,7 @@ export class SignalListenerService {
           targets: signalData.targets,
           stopLoss: signalData.stopLoss,
           source: signalData.twitterHandle,
+          subscribers: subscribers.map((s) => s.username),
         });
       }
     } catch (error) {
@@ -200,23 +197,10 @@ export class SignalListenerService {
         coin: document.coin,
         twitterHandle: document.twitterHandle,
         tokenMentioned: document.signal_data?.tokenMentioned,
+        subscribersCount: document.subscribers?.length || 0,
       });
 
-      // Filter 1: Check if target subscriber is in the subscribers array
-      const hasSubscriber = this.hasTargetSubscriber(
-        document.subscribers,
-        config.mongodb.targetSubscriber
-      );
-
-      if (!hasSubscriber) {
-        logger.debug("Document filtered out: target subscriber not found", {
-          targetSubscriber: config.mongodb.targetSubscriber,
-          subscribers: document.subscribers.map((s) => s.username),
-        });
-        return;
-      }
-
-      // Filter 2: Check if token is allowed for trading
+      // Filter: Check if token is allowed for trading
       const isAllowed = this.isTokenAllowed(
         document.signal_data?.tokenMentioned
       );
@@ -229,14 +213,23 @@ export class SignalListenerService {
         return;
       }
 
-      // Both filters passed - process the signal
-      logger.info("Document passed all filters, processing signal:", {
+      // Check if there are any subscribers
+      if (!document.subscribers || document.subscribers.length === 0) {
+        logger.debug("Document filtered out: no subscribers", {
+          tweet_id: document.tweet_id,
+        });
+        return;
+      }
+
+      // Token filter passed - process the signal with all subscribers
+      logger.info("Document passed filters, processing signal:", {
         tweet_id: document.tweet_id,
         tokenMentioned: document.signal_data.tokenMentioned,
-        subscriber: config.mongodb.targetSubscriber,
+        subscribersCount: document.subscribers.length,
+        subscribers: document.subscribers.map((s) => s.username),
       });
 
-      await this.processSignal(document.signal_data);
+      await this.processSignal(document.signal_data, document.subscribers);
     } catch (error) {
       logger.error("Error handling new document:", error);
     }

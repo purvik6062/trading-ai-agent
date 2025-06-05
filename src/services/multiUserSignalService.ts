@@ -1,5 +1,5 @@
 import { SignalListenerService } from "./signalListenerService";
-import { UserService } from "./userService";
+import { MongoUserService } from "./mongoUserService";
 import { TrailingStopService } from "./trailingStopService";
 import { logger } from "../utils/logger";
 import { TradingSignal } from "../types/trading";
@@ -37,12 +37,12 @@ interface TradingSignalDocument {
 }
 
 export class MultiUserSignalService {
-  private userService: UserService;
+  private userService: MongoUserService;
   private trailingStopService: TrailingStopService;
   private signalListenerService: SignalListenerService;
 
   constructor(
-    userService: UserService,
+    userService: MongoUserService,
     trailingStopService: TrailingStopService
   ) {
     this.userService = userService;
@@ -73,7 +73,8 @@ export class MultiUserSignalService {
    * This replaces the single-user processMongoSignal function
    */
   private async processMultiUserSignal(
-    signalData: ProcessedSignalData
+    signalData: ProcessedSignalData,
+    subscribers: Array<{ username: string; sent: boolean }>
   ): Promise<void> {
     try {
       logger.info("🚀 Processing multi-user trading signal:", {
@@ -82,6 +83,8 @@ export class MultiUserSignalService {
         currentPrice: signalData.currentPrice,
         twitterHandle: signalData.twitterHandle,
         tweet_id: signalData.tweet_id,
+        subscribersCount: subscribers.length,
+        subscribers: subscribers.map((s) => s.username),
       });
 
       // Convert signal data to TradingSignal format
@@ -103,15 +106,34 @@ export class MultiUserSignalService {
         tokenMentioned: signalData.tokenMentioned,
       };
 
-      // Get all active users who should receive this signal
-      const activeUsers = this.userService.getActiveUsers();
+      // Get all active users who have registered vaults
+      const registeredUsers = await this.userService.getActiveUsers();
 
-      logger.info(
-        `📊 Processing signal for ${activeUsers.length} active users`
-      );
+      // Filter subscribers to only include those who have registered vaults
+      const subscribersWithVaults = subscribers
+        .map((s) => s.username)
+        .filter((username) => registeredUsers.includes(username));
 
-      // Process signal for each user in parallel
-      const userPromises = activeUsers.map((username) =>
+      logger.info("📊 Processing signal for users with registered vaults:", {
+        totalSubscribers: subscribers.length,
+        registeredUsers: registeredUsers.length,
+        usersWithVaults: subscribersWithVaults.length,
+        usersToProcess: subscribersWithVaults,
+      });
+
+      if (subscribersWithVaults.length === 0) {
+        logger.warn(
+          "⚠️ No subscribers have registered vaults - signal will not be processed",
+          {
+            subscriberUsernames: subscribers.map((s) => s.username),
+            registeredUsernames: registeredUsers,
+          }
+        );
+        return;
+      }
+
+      // Process signal for each user with registered vault
+      const userPromises = subscribersWithVaults.map((username) =>
         this.processSignalForUser(username, parsedSignal)
       );
 
@@ -122,7 +144,7 @@ export class MultiUserSignalService {
       let errorCount = 0;
 
       results.forEach((result, index) => {
-        const username = activeUsers[index];
+        const username = subscribersWithVaults[index];
         if (result.status === "fulfilled") {
           successCount++;
           logger.info(
@@ -139,7 +161,8 @@ export class MultiUserSignalService {
       });
 
       logger.info("📈 Multi-user signal processing completed:", {
-        totalUsers: activeUsers.length,
+        totalSubscribers: subscribers.length,
+        usersWithVaults: subscribersWithVaults.length,
         successful: successCount,
         failed: errorCount,
         signal: signalData.signal,
@@ -216,10 +239,10 @@ export class MultiUserSignalService {
   /**
    * Get service status
    */
-  getStatus() {
+  async getStatus() {
     return {
       signalListener: this.signalListenerService.getStatus(),
-      userStats: this.userService.getSessionStats(),
+      userStats: await this.userService.getSessionStats(),
     };
   }
 
@@ -238,10 +261,22 @@ export class MultiUserSignalService {
   }
 
   /**
-   * Manually process a signal for testing (affects all users)
+   * Manually process a signal for testing (affects all active users)
    */
   async processManualSignal(signalData: any): Promise<void> {
-    await this.processMultiUserSignal(signalData);
+    // For manual testing, create a subscribers array with all active users
+    const activeUsers = await this.userService.getActiveUsers();
+    const subscribers = activeUsers.map((username) => ({
+      username,
+      sent: false,
+    }));
+
+    logger.info("🧪 Manual signal processing initiated", {
+      activeUsersCount: activeUsers.length,
+      activeUsers,
+    });
+
+    await this.processMultiUserSignal(signalData, subscribers);
   }
 
   /**

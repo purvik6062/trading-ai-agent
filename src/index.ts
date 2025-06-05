@@ -11,7 +11,7 @@ import { TrailingStopService } from "./services/trailingStopService";
 import { SignalParser } from "./utils/signalParser";
 import { TradingSignal, SignalType } from "./types/trading";
 import { SignalListenerService } from "./services/signalListenerService";
-import { UserService } from "./services/userService";
+import { MongoUserService } from "./services/mongoUserService";
 import { MultiUserSignalService } from "./services/multiUserSignalService";
 import { ethers } from "ethers";
 
@@ -30,7 +30,7 @@ let signalParser: SignalParser;
 let signalListenerService: SignalListenerService;
 
 // Multi-user services
-let userService: UserService;
+let userService: MongoUserService;
 let multiUserSignalService: MultiUserSignalService;
 
 /**
@@ -120,7 +120,8 @@ async function initializeServices() {
     signalParser = new SignalParser();
 
     // Initialize Multi-user services
-    userService = new UserService();
+    userService = new MongoUserService();
+    await userService.connect();
 
     // Initialize Multi-user Signal Service (replaces single-user signal listener)
     if (config.mongodb.uri) {
@@ -148,33 +149,48 @@ async function initializeServices() {
 /**
  * Health check endpoint
  */
-app.get("/health", (req, res) => {
-  const multiUserServiceStatus = multiUserSignalService
-    ? multiUserSignalService.getStatus()
-    : null;
+app.get("/health", async (req, res) => {
+  try {
+    const multiUserServiceStatus = multiUserSignalService
+      ? await multiUserSignalService.getStatus()
+      : null;
 
-  res.json({
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-    services: {
-      enzyme: !!enzymeService,
-      gameEngine: !!gameEngineService,
-      coinGecko: !!coinGeckoService,
-      trailingStop: !!trailingStopService,
-      multiUserSignal: {
-        enabled: !!multiUserSignalService,
-        connected: multiUserServiceStatus?.signalListener?.connected || false,
-        listening: multiUserServiceStatus?.signalListener?.listening || false,
-        activeUsers: multiUserServiceStatus?.userStats?.activeUsers || 0,
-        totalMappings: multiUserServiceStatus?.userStats?.totalMappings || 0,
-        activeSessions: multiUserServiceStatus?.userStats?.activeSessions || 0,
+    const userServiceStats = userService
+      ? await userService.getSessionStats()
+      : null;
+
+    res.json({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      services: {
+        enzyme: !!enzymeService,
+        gameEngine: !!gameEngineService,
+        coinGecko: !!coinGeckoService,
+        trailingStop: !!trailingStopService,
+        multiUserSignal: {
+          enabled: !!multiUserSignalService,
+          connected: multiUserServiceStatus?.signalListener?.connected || false,
+          listening: multiUserServiceStatus?.signalListener?.listening || false,
+          activeUsers: multiUserServiceStatus?.userStats?.activeUsers || 0,
+          totalMappings: multiUserServiceStatus?.userStats?.totalMappings || 0,
+          activeSessions:
+            multiUserServiceStatus?.userStats?.activeSessions || 0,
+        },
+        userService: {
+          enabled: !!userService,
+          connected: userService?.isConnectedToMongoDB() || false,
+          stats: userServiceStats,
+        },
       },
-      userService: {
-        enabled: !!userService,
-        stats: userService ? userService.getSessionStats() : null,
-      },
-    },
-  });
+    });
+  } catch (error) {
+    logger.error("Health check error:", error);
+    res.status(500).json({
+      status: "unhealthy",
+      error: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 /**
@@ -452,7 +468,7 @@ app.get("/users/:username", async (req, res) => {
   try {
     const { username } = req.params;
 
-    const userMapping = userService.getUserVaultMapping(username);
+    const userMapping = await userService.getUserMapping(username);
     if (!userMapping) {
       return res.status(404).json({
         error: "User not found",
@@ -478,8 +494,8 @@ app.get("/users/:username", async (req, res) => {
  */
 app.get("/users", async (req, res) => {
   try {
-    const activeUsers = userService.getActiveUsers();
-    const sessionStats = userService.getSessionStats();
+    const activeUsers = await userService.getActiveUsers();
+    const sessionStats = await userService.getSessionStats();
 
     res.json({
       success: true,
