@@ -11,6 +11,8 @@ import { TrailingStopService } from "./services/trailingStopService";
 import { SignalParser } from "./utils/signalParser";
 import { TradingSignal, SignalType } from "./types/trading";
 import { SignalListenerService } from "./services/signalListenerService";
+import { UserService } from "./services/userService";
+import { MultiUserSignalService } from "./services/multiUserSignalService";
 import { ethers } from "ethers";
 
 const app = express();
@@ -26,6 +28,10 @@ let coinGeckoService: CoinGeckoService;
 let trailingStopService: TrailingStopService;
 let signalParser: SignalParser;
 let signalListenerService: SignalListenerService;
+
+// Multi-user services
+let userService: UserService;
+let multiUserSignalService: MultiUserSignalService;
 
 /**
  * Process a trading signal from MongoDB - integrates with existing game engine service
@@ -113,17 +119,20 @@ async function initializeServices() {
     trailingStopService = new TrailingStopService();
     signalParser = new SignalParser();
 
-    // Initialize MongoDB Signal Listener Service
+    // Initialize Multi-user services
+    userService = new UserService();
+
+    // Initialize Multi-user Signal Service (replaces single-user signal listener)
     if (config.mongodb.uri) {
-      signalListenerService = new SignalListenerService(processMongoSignal);
-      await signalListenerService.connect();
-      await signalListenerService.startListening();
-      logger.info(
-        "✅ MongoDB Signal Listener Service initialized and listening"
+      multiUserSignalService = new MultiUserSignalService(
+        userService,
+        trailingStopService
       );
+      await multiUserSignalService.init();
+      logger.info("✅ Multi-user Signal Service initialized and listening");
     } else {
       logger.warn(
-        "⚠️ MongoDB URI not configured, signal listener service disabled"
+        "⚠️ MongoDB URI not configured, multi-user signal service disabled"
       );
     }
 
@@ -140,8 +149,8 @@ async function initializeServices() {
  * Health check endpoint
  */
 app.get("/health", (req, res) => {
-  const signalListenerStatus = signalListenerService
-    ? signalListenerService.getStatus()
+  const multiUserServiceStatus = multiUserSignalService
+    ? multiUserSignalService.getStatus()
     : null;
 
   res.json({
@@ -152,10 +161,17 @@ app.get("/health", (req, res) => {
       gameEngine: !!gameEngineService,
       coinGecko: !!coinGeckoService,
       trailingStop: !!trailingStopService,
-      signalListener: {
-        enabled: !!signalListenerService,
-        connected: signalListenerStatus?.connected || false,
-        listening: signalListenerStatus?.listening || false,
+      multiUserSignal: {
+        enabled: !!multiUserSignalService,
+        connected: multiUserServiceStatus?.signalListener?.connected || false,
+        listening: multiUserServiceStatus?.signalListener?.listening || false,
+        activeUsers: multiUserServiceStatus?.userStats?.activeUsers || 0,
+        totalMappings: multiUserServiceStatus?.userStats?.totalMappings || 0,
+        activeSessions: multiUserServiceStatus?.userStats?.activeSessions || 0,
+      },
+      userService: {
+        enabled: !!userService,
+        stats: userService ? userService.getSessionStats() : null,
       },
     },
   });
@@ -176,11 +192,14 @@ app.get("/config", (req, res) => {
       enabled: config.trailingStop.enabled,
       percentage: config.trailingStop.percentage,
     },
-    signalListener: {
+    multiUserSignal: {
       enabled: !!config.mongodb.uri,
       database: config.mongodb.databaseName,
       collection: config.mongodb.collectionName,
-      targetSubscriber: config.mongodb.targetSubscriber,
+      userService: {
+        enabled: !!userService,
+        stats: userService ? userService.getSessionStats() : null,
+      },
     },
   });
 });
@@ -377,6 +396,219 @@ app.post("/trade", async (req, res) => {
   }
 });
 
+/**
+ * Register a user for automated trading (called by Next.js app)
+ */
+app.post("/users/register", async (req, res) => {
+  try {
+    const { username, vaultAddress, email, tradingSettings } = req.body;
+
+    if (!username || !vaultAddress) {
+      return res.status(400).json({
+        error: "username and vaultAddress are required",
+      });
+    }
+
+    const result = await userService.registerUserFromAPI({
+      username,
+      vaultAddress,
+      email,
+      tradingSettings,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error("Error registering user:", error);
+    res.status(500).json({
+      error: "Failed to register user",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Update user settings
+ */
+app.put("/users/:username/settings", async (req, res) => {
+  try {
+    const { username } = req.params;
+    const settings = req.body;
+
+    const result = await userService.updateUserSettings(username, settings);
+    res.json(result);
+  } catch (error) {
+    logger.error("Error updating user settings:", error);
+    res.status(500).json({
+      error: "Failed to update user settings",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get user information
+ */
+app.get("/users/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const userMapping = userService.getUserVaultMapping(username);
+    if (!userMapping) {
+      return res.status(404).json({
+        error: "User not found",
+      });
+    }
+
+    // Return user data (no private key to exclude since we don't store it)
+    res.json({
+      success: true,
+      user: userMapping,
+    });
+  } catch (error) {
+    logger.error("Error getting user information:", error);
+    res.status(500).json({
+      error: "Failed to get user information",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get all active users
+ */
+app.get("/users", async (req, res) => {
+  try {
+    const activeUsers = userService.getActiveUsers();
+    const sessionStats = userService.getSessionStats();
+
+    res.json({
+      success: true,
+      users: activeUsers,
+      stats: sessionStats,
+    });
+  } catch (error) {
+    logger.error("Error getting users:", error);
+    res.status(500).json({
+      error: "Failed to get users",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get user's vault information
+ */
+app.get("/users/:username/vault", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const userSession = await userService.getUserSession(username);
+    if (!userSession) {
+      return res.status(404).json({
+        error: "User session not found or inactive",
+      });
+    }
+
+    const vaultInfo = await userSession.gameEngineService.getVaultInfo();
+    const portfolioValue =
+      await userSession.gameEngineService.getPortfolioValue();
+
+    const responseData = {
+      username,
+      vaultAddress: userSession.vaultAddress,
+      vaultInfo,
+      portfolioValue,
+      timestamp: new Date().toISOString(),
+    };
+
+    res.json(serializeForAPI(responseData));
+  } catch (error) {
+    logger.error("Error getting user vault info:", error);
+    res.status(500).json({
+      error: "Failed to get user vault info",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get user's positions
+ */
+app.get("/users/:username/positions", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const userSession = await userService.getUserSession(username);
+    if (!userSession) {
+      return res.status(404).json({
+        error: "User session not found or inactive",
+      });
+    }
+
+    const positions = await userSession.gameEngineService.getCurrentPositions();
+
+    const responseData = {
+      username,
+      vaultAddress: userSession.vaultAddress,
+      positions,
+      total: positions.length,
+      timestamp: new Date().toISOString(),
+    };
+
+    res.json(serializeForAPI(responseData));
+  } catch (error) {
+    logger.error("Error getting user positions:", error);
+    res.status(500).json({
+      error: "Failed to get user positions",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Process signal for specific user (testing endpoint)
+ */
+app.post("/users/:username/signal", async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { signal, signal_data } = req.body;
+
+    if (!signal && !signal_data) {
+      return res.status(400).json({
+        error: "Either 'signal' (string) or 'signal_data' (object) is required",
+      });
+    }
+
+    let parsedSignal: TradingSignal | null = null;
+
+    if (signal_data) {
+      parsedSignal = SignalParser.parseSignalObject(signal_data);
+    } else if (signal) {
+      parsedSignal = SignalParser.parseSignal(signal);
+    }
+
+    if (!parsedSignal) {
+      return res.status(400).json({ error: "Invalid signal format" });
+    }
+
+    const result = await multiUserSignalService.processSignalForSpecificUser(
+      username,
+      parsedSignal
+    );
+
+    res.json({
+      success: true,
+      result,
+    });
+  } catch (error) {
+    logger.error("Error processing signal for user:", error);
+    res.status(500).json({
+      error: "Failed to process signal for user",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
 // Global error handler
 app.use(
   (
@@ -415,11 +647,10 @@ async function gracefulShutdown(signal: string) {
   logger.info(`Received ${signal}, shutting down gracefully...`);
 
   try {
-    // Cleanup signal listener service
-    if (signalListenerService) {
-      await signalListenerService.stopListening();
-      await signalListenerService.disconnect();
-      logger.info("✅ Signal listener service stopped");
+    // Cleanup multi-user signal service
+    if (multiUserSignalService) {
+      await multiUserSignalService.stop();
+      logger.info("✅ Multi-user signal service stopped");
     }
 
     logger.info("👋 Graceful shutdown completed");
