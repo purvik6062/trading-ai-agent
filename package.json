@@ -1,7 +1,7 @@
 {
   "name": "trading-ai-agent",
   "version": "1.0.0",
-  "description": "AI Trading Agent using Game Engine SDK and Enzyme Protocol SDK",
+  "description": "AI Trading Agent using Game Engine SDK and Enzyme Protocol SDK with Multi-Position Management",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -9,26 +9,47 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "jest",
     "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts"
+    "format": "prettier --write src/**/*.ts",
+    "test:quickstart": "node test-quickstart.js",
+    "test:legacy": "node test-script.js",
+    "test:multi": "node test-script-multiposition.js",
+    "test:quick": "node test-individual.js quick",
+    "test:conflict": "node test-individual.js conflict",
+    "test:connection": "node test-individual.js connection",
+    "test:single": "node test-individual.js single",
+    "test:multiple": "node test-individual.js multiple",
+    "test:different": "node test-individual.js different",
+    "test:risk": "node test-individual.js risk",
+    "test:limit": "node test-individual.js limit",
+    "test:status": "node test-individual.js status",
+    "test:monitor": "node test-individual.js monitor",
+    "test:menu": "node test-individual.js",
+    "test:all": "npm run test:legacy && npm run test:multi",
+    "test:demo": "npm run test:connection && npm run test:single && npm run test:status",
+    "test:signal-listener": "npm run build && node test-signal-listener.js"
   },
   "keywords": [
     "trading",
     "ai-agent",
     "game-engine",
     "enzyme-protocol",
-    "defi"
+    "defi",
+    "multi-position",
+    "risk-management"
   ],
   "author": "Trading Minds",
   "license": "MIT",
   "dependencies": {
     "@enzymefinance/sdk": "^1.0.0",
+    "@types/mongodb": "^4.0.7",
     "@virtuals-protocol/game": "^0.1.14",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "winston": "^3.11.0",
-    "node-cron": "^3.0.3",
     "ethers": "^6.8.1",
+    "express": "^4.18.2",
+    "mongodb": "^6.17.0",
+    "node-cron": "^3.0.3",
+    "winston": "^3.11.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {
