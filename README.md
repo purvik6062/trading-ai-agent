@@ -494,3 +494,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ for the crypto trading community**
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/purvik6062/trading-ai-agent)
