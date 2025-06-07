@@ -4,20 +4,56 @@
 
 This guide explains how to integrate the **Trading AI Agent Service** with your existing **Next.js application** for **multi-user automated trading**.
 
+> **🔐 Security Update**: This guide has been updated to include the new **MongoDB + Redis** API security implementation with API key authentication, rate limiting, and comprehensive access control.
+
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐
 │   Next.js App   │────│ Trading AI Service   │────│     MongoDB     │
 │  (Frontend)     │    │   (Express.js)       │    │ • trading-signals│
+│   🔑 API Keys   │    │   🛡️ Secured API    │    │ • api_keys       │
 └─────────────────┘    └──────────────────────┘    │ • user_mappings  │
         │                         │                 │ • user_settings  │
-        │                         │                 └─────────────────┘
-        ▼                         ▼
+        │                         ▼                 └─────────────────┘
+        │               ┌──────────────────────┐
+        │               │       Redis          │
+        │               │   🚦 Rate Limiting   │
+        │               │   📊 Usage Tracking  │
+        ▼               └──────────────────────┘
 ┌─────────────────┐    ┌──────────────────────┐
 │ Your Next.js DB │    │   Enzyme Vaults      │
 │ (User Profiles) │    │   (On-chain)         │
 └─────────────────┘    └──────────────────────┘
+```
+
+### 🔐 Security Features
+
+- **🔑 API Key Authentication**: MongoDB-stored API keys with SHA-256 hashing
+- **🚦 Rate Limiting**: Redis-based distributed rate limiting with sliding windows
+- **👤 Role-Based Access**: Admin, Trading, Read-Only, Integration, and Webhook keys
+- **📊 Usage Tracking**: Per-key quotas (daily/monthly) and comprehensive analytics
+- **🛡️ Request Security**: CORS, sanitization, IP whitelisting, and audit trails
+- **🛡️ Admin Dashboard**: Complete UI for key management, monitoring, and analytics
+
+### **API Key Roles & Permissions:**
+
+| Role            | Prefix         | Rate Limit | Permissions                                           | Use Case                            |
+| --------------- | -------------- | ---------- | ----------------------------------------------------- | ----------------------------------- |
+| **Admin**       | `admin_`       | 200/15min  | `["*"]`                                               | System management, dashboard access |
+| **Trading**     | `trading_`     | 100/15min  | `["signal:process", "positions:read", "config:read"]` | Core trading operations             |
+| **Read-Only**   | `readonly_`    | 50/15min   | `["positions:read", "config:read", "health:read"]`    | Monitoring dashboards               |
+| **Integration** | `integration_` | 150/15min  | Custom permissions                                    | Third-party apps                    |
+| **Webhook**     | `webhook_`     | 500/15min  | `["webhook:receive", "signal:process"]`               | High-volume processing              |
+
+### **Request Format:**
+
+```bash
+# All API requests require this header:
+X-API-Key: your_api_key_here
+
+# Example:
+curl -H "X-API-Key: trading_abc123_def456..." https://api.example.com/signal
 ```
 
 ## 🎯 Integration Steps
@@ -28,13 +64,16 @@ This guide explains how to integrate the **Trading AI Agent Service** with your 
 
 ```bash
 # Required environment variables (.env file)
-NODE_ENV=development
+NODE_ENV=production
 PORT=3000
 
 # MongoDB Configuration (same database as your signals)
 MONGODB_URI=mongodb://your-mongodb-uri
 MONGODB_DATABASE=ctxbt-signal-flow
 MONGODB_COLLECTION=trading-signals
+
+# Redis Configuration (for rate limiting)
+REDIS_URL=redis://localhost:6379
 
 # Blockchain Configuration
 RPC_URL=https://arb1.arbitrum.io/rpc
@@ -44,15 +83,65 @@ PRIVATE_KEY=0x... # Your delegated private key for vault operations
 GAME_ENGINE_API_KEY=your-game-engine-api-key
 GAME_ENGINE_BASE_URL=https://api.gameengine.ai
 
-# Optional: API Security
-API_SECRET_KEY=your-api-secret-key
+# API Security Configuration (REQUIRED)
+API_SECURITY_ENABLED=true
+
+# Note: API keys are now managed via MongoDB database
+# Use the admin dashboard or CLI to generate keys:
+# npm run generate-keys
+
+# Rate Limiting Configuration
+RATE_LIMITING_ENABLED=true
+RATE_LIMIT_WINDOW_MS=900000  # 15 minutes
+RATE_LIMIT_DEFAULT_MAX=100   # requests per window
 ```
 
-2. **Install & Start the Service**
+2. **API Key Management**
+
+### **Option A: CLI Generation (Development)**
 
 ```bash
-# Install dependencies
-npm install
+# Generate initial keys for development
+npm run generate-keys
+
+# Output example:
+# admin_lx2k9m_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6
+# trading_lx2k9n_b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a1
+# readonly_lx2k9o_c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a1b2
+```
+
+### **Option B: Admin Dashboard (Production)**
+
+```bash
+# Access admin dashboard at:
+# https://your-admin-dashboard.com/admin/dashboard
+
+# Features:
+# ✅ Create/revoke API keys with custom permissions
+# ✅ Monitor usage and rate limits in real-time
+# ✅ Manage user roles and access levels
+# ✅ View audit logs and analytics
+```
+
+### **Option C: API Endpoints (Programmatic)**
+
+```bash
+# Create new key via API
+curl -X POST https://your-api.com/api/keys \
+  -H "X-API-Key: admin_your_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Frontend App Key",
+    "type": "trading",
+    "permissions": ["signal:process", "positions:read"]
+  }'
+```
+
+3. **Install Dependencies & Start Service**
+
+```bash
+# Install dependencies (including new security packages)
+npm install mongodb ioredis express-rate-limit
 
 # Build the project
 npm run build
@@ -61,21 +150,55 @@ npm run build
 npm start
 # Service runs on http://localhost:3000
 
-# Check health
-curl http://localhost:3000/health
+# Check health (now requires API key)
+curl -H "X-API-Key: readonly_your_key_here" http://localhost:3000/health
 ```
 
 ### Step 2: Update Your Next.js App
 
-#### 2.1 Create API Integration Service
+#### 2.1 Create Secure API Integration Service
 
 ```typescript
 // lib/tradingService.ts
 export class TradingServiceClient {
   private baseUrl: string;
+  private apiKey: string;
 
-  constructor(baseUrl: string = "http://localhost:3000") {
+  constructor(
+    baseUrl: string = "http://localhost:3000",
+    apiKey: string = process.env.TRADING_SERVICE_API_KEY || ""
+  ) {
     this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+
+    if (!this.apiKey) {
+      throw new Error("Trading Service API key is required");
+    }
+  }
+
+  private async makeRequest(endpoint: string, options: RequestInit = {}) {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers = {
+      "Content-Type": "application/json",
+      "X-API-Key": this.apiKey,
+      ...options.headers,
+    };
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        error: `HTTP ${response.status}`,
+      }));
+      throw new Error(
+        error.message || error.error || `Request failed: ${response.status}`
+      );
+    }
+
+    return response.json();
   }
 
   // Register user for automated trading
@@ -84,46 +207,54 @@ export class TradingServiceClient {
     vaultAddress: string;
     email?: string;
   }) {
-    const response = await fetch(`${this.baseUrl}/users/register`, {
+    return this.makeRequest("/users/register", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(userData),
     });
-    return response.json();
   }
 
   // Get user trading status
   async getUserInfo(username: string) {
-    const response = await fetch(`${this.baseUrl}/users/${username}`);
-    return response.json();
+    return this.makeRequest(`/users/${username}`);
   }
 
   // Get user's vault information
   async getUserVault(username: string) {
-    const response = await fetch(`${this.baseUrl}/users/${username}/vault`);
-    return response.json();
+    return this.makeRequest(`/users/${username}/vault`);
   }
 
   // Get user's positions
   async getUserPositions(username: string) {
-    const response = await fetch(`${this.baseUrl}/users/${username}/positions`);
-    return response.json();
+    return this.makeRequest(`/users/${username}/positions`);
   }
 
   // Update user settings
   async updateUserSettings(username: string, settings: any) {
-    const response = await fetch(`${this.baseUrl}/users/${username}/settings`, {
+    return this.makeRequest(`/users/${username}/settings`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
     });
-    return response.json();
+  }
+
+  // Process trading signal
+  async processSignal(message: string) {
+    return this.makeRequest("/signal", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
   }
 
   // Check service health
   async getHealth() {
-    const response = await fetch(`${this.baseUrl}/health`);
-    return response.json();
+    return this.makeRequest("/health");
+  }
+
+  // Get API usage statistics (admin only)
+  async getUsageStats(keyId?: string) {
+    const endpoint = keyId
+      ? `/admin/api-keys/stats/usage?keyId=${keyId}`
+      : "/admin/api-keys/stats/overview";
+    return this.makeRequest(endpoint);
   }
 }
 ```
@@ -394,23 +525,60 @@ User → Next.js → Call Trading Service API → Display Positions/Results
 
 ## 📡 API Endpoints Reference
 
-### User Management
+### Core Trading Endpoints
 
-- `POST /users/register` - Register user for automated trading
-- `GET /users/:username` - Get user information
-- `PUT /users/:username/settings` - Update user settings
-- `GET /users` - Get all active users
+| Endpoint        | Method | Required Permission | Description              |
+| --------------- | ------ | ------------------- | ------------------------ |
+| `/signal`       | POST   | `signal:process`    | Process trading signal   |
+| `/positions`    | GET    | `positions:read`    | Get active positions     |
+| `/health`       | GET    | `health:read`       | Service health check     |
+| `/config`       | GET    | `config:read`       | Service configuration    |
+| `/parse-signal` | POST   | `*` (admin only)    | Parse signal for testing |
 
-### Vault & Trading
+### API Key Management (Admin Only)
 
-- `GET /users/:username/vault` - Get user's vault information
-- `GET /users/:username/positions` - Get user's active positions
-- `POST /users/:username/signal` - Test signal processing for specific user
+| Endpoint                         | Method | Required Permission | Description         |
+| -------------------------------- | ------ | ------------------- | ------------------- |
+| `/admin/api-keys`                | GET    | `*`                 | List all API keys   |
+| `/admin/api-keys`                | POST   | `*`                 | Create new API key  |
+| `/admin/api-keys/:keyId`         | GET    | `*`                 | Get API key details |
+| `/admin/api-keys/:keyId/status`  | PUT    | `*`                 | Update key status   |
+| `/admin/api-keys/:keyId`         | DELETE | `*`                 | Revoke API key      |
+| `/admin/api-keys/stats/overview` | GET    | `*`                 | Usage statistics    |
 
-### System
+### Request Headers
 
-- `GET /health` - Service health check
-- `GET /config` - Service configuration
+All requests must include:
+
+```bash
+Content-Type: application/json
+X-API-Key: your_api_key_here
+```
+
+### Response Format
+
+```json
+{
+  "success": true,
+  "data": {
+    // Response data
+  },
+  "message": "Optional message",
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Error Responses
+
+```json
+{
+  "success": false,
+  "error": "Error Type",
+  "message": "Detailed error message",
+  "code": "ERROR_CODE",
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
 
 ## 🔒 Security Model: Vault Delegation
 
@@ -437,39 +605,149 @@ The trading service uses **vault delegation** instead of storing user private ke
    - ✅ **Revocable** - Users can revoke delegation anytime
    - ✅ **Simpler** - One key manages all vaults
 
-## 🔒 Security Considerations
+## 🔒 Advanced Security Implementation
 
-### 1. API Authentication
+### 1. API Key Management
 
-```typescript
-// Add authentication middleware to Trading Service
-app.use("/users", authenticateRequest);
+The Trading AI Service now uses a comprehensive security system with MongoDB for API key storage and Redis for rate limiting:
 
-function authenticateRequest(req, res, next) {
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey || !isValidApiKey(apiKey)) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-}
+#### API Key Types & Permissions
+
+| Key Type        | Permissions                        | Rate Limit | Use Case                        |
+| --------------- | ---------------------------------- | ---------- | ------------------------------- |
+| **Admin**       | Full access (`*`)                  | 200/15min  | System management, key creation |
+| **Trading**     | `signal:process`, `positions:read` | 100/15min  | Your Next.js app integration    |
+| **Read-Only**   | `positions:read`, `config:read`    | 50/15min   | Monitoring dashboards           |
+| **Integration** | Custom permissions                 | 150/15min  | Third-party integrations        |
+
+#### Creating API Keys
+
+```bash
+# Method 1: Generate via command line
+npm run generate-keys
+
+# Method 2: Create via Admin API
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: admin_your_admin_key_here" \
+  -d '{
+    "name": "Next.js Integration Key",
+    "type": "integration",
+    "permissions": ["signal:process", "positions:read", "config:read"],
+    "quotas": {
+      "daily": 10000,
+      "monthly": 300000
+    },
+    "ipWhitelist": ["your.server.ip.address"]
+  }' \
+  http://localhost:3000/admin/api-keys
 ```
 
-### 2. Environment Variables
+### 2. Integration Security Setup
+
+#### Environment Variables
 
 ```bash
 # Trading Service .env
 MONGODB_URI=mongodb://...
+REDIS_URL=redis://localhost:6379
 GAME_ENGINE_API_KEY=...
 RPC_URL=...
 PRIVATE_KEY=0x... # Delegated private key for all vault operations
-API_SECRET_KEY=your-secret-key
+
+# API Security (REQUIRED)
+API_SECURITY_ENABLED=true
+API_KEY_ADMIN=admin_your_secure_key
+API_KEY_INTEGRATION=integration_your_integration_key
 
 # Next.js .env.local
-TRADING_SERVICE_URL=http://localhost:3000
-TRADING_SERVICE_API_KEY=your-api-key
+TRADING_SERVICE_API_KEY=integration_your_integration_key
+TRADING_SERVICE_URL=https://your-trading-service.com
 ```
 
-### 3. Vault Delegation Setup
+### 3. Rate Limiting & Quotas
+
+#### Understanding Rate Limits
+
+- **Window-based**: 15-minute sliding windows
+- **Per-key tracking**: Each API key has independent limits
+- **Distributed**: Uses Redis for cluster-safe rate limiting
+- **Headers**: Rate limit info included in response headers
+
+```bash
+# Response headers include:
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 87
+X-RateLimit-Reset: 1640995200
+```
+
+#### Handling Rate Limits in Your App
+
+```typescript
+// Enhanced error handling for rate limits
+class RateLimitError extends Error {
+  constructor(
+    message: string,
+    public retryAfter: number
+  ) {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
+
+export class TradingServiceClient {
+  private async makeRequest(endpoint: string, options: RequestInit = {}) {
+    try {
+      const response = await fetch(url, { ...options, headers });
+
+      if (response.status === 429) {
+        const error = await response.json();
+        const retryAfter = response.headers.get("retry-after");
+        throw new RateLimitError(error.message, parseInt(retryAfter || "60"));
+      }
+
+      // Handle other error cases...
+      return response.json();
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        // Implement exponential backoff
+        await new Promise((resolve) =>
+          setTimeout(resolve, error.retryAfter * 1000)
+        );
+        return this.makeRequest(endpoint, options); // Retry once
+      }
+      throw error;
+    }
+  }
+}
+```
+
+### 4. Security Best Practices
+
+```typescript
+// ✅ Good: Store API keys securely
+const apiKey = process.env.TRADING_SERVICE_API_KEY;
+
+// ❌ Bad: Hard-code API keys
+const apiKey = "integration_lx2k9o_c3d4e5f6..."; // Never do this!
+
+// ✅ Good: Validate API key format
+if (!apiKey || !apiKey.startsWith("integration_")) {
+  throw new Error("Invalid integration API key format");
+}
+
+// ✅ Good: Monitor API usage
+async function getApiUsageStats() {
+  const stats = await tradingService.getUsageStats();
+  return {
+    dailyUsage: stats.data.keys[0]?.dailyUsage || 0,
+    monthlyUsage: stats.data.keys[0]?.monthlyUsage || 0,
+    remaining: stats.data.keys[0]?.remaining || 0,
+  };
+}
+```
+
+### 5. Vault Delegation Setup
 
 ```typescript
 // In your Next.js vault creation process
@@ -488,6 +766,81 @@ export async function createVaultWithDelegation(userWallet: Wallet) {
   });
 
   return vault;
+}
+```
+
+## 🚦 Rate Limiting & Error Handling
+
+### **Rate Limits by Key Type:**
+
+```typescript
+// Default rate limits (customizable per key)
+const rateLimits = {
+  admin: "200 requests per 15 minutes",
+  trading: "100 requests per 15 minutes",
+  readonly: "50 requests per 15 minutes",
+  integration: "150 requests per 15 minutes",
+  webhook: "500 requests per 15 minutes",
+};
+```
+
+### **Handling Rate Limit Errors:**
+
+```typescript
+// Example error handling for rate limits
+const handleApiCall = async (apiCall: () => Promise<any>) => {
+  try {
+    return await apiCall();
+  } catch (error) {
+    if (error.code === "RATE_LIMITED") {
+      const retryAfter = error.retryAfter; // seconds
+      console.warn(`Rate limited. Retry after ${retryAfter} seconds`);
+
+      // Implement exponential backoff
+      await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+
+      return handleApiCall(apiCall); // Retry
+    }
+    throw error;
+  }
+};
+```
+
+### **Error Response Format:**
+
+```json
+{
+  "success": false,
+  "error": "Rate Limited",
+  "message": "Too many requests. Try again in 300 seconds.",
+  "code": "RATE_LIMITED",
+  "retryAfter": 300,
+  "timestamp": "2025-01-20T10:30:00Z"
+}
+```
+
+### **Security Best Practices:**
+
+```typescript
+// ✅ Good: Store API keys securely
+const apiKey = process.env.TRADING_SERVICE_API_KEY;
+
+// ❌ Bad: Hard-code API keys
+const apiKey = "integration_lx2k9o_c3d4e5f6..."; // Never do this!
+
+// ✅ Good: Validate API key format
+if (!apiKey || !apiKey.startsWith("integration_")) {
+  throw new Error("Invalid integration API key format");
+}
+
+// ✅ Good: Monitor API usage
+async function getApiUsageStats() {
+  const stats = await tradingService.getUsageStats();
+  return {
+    dailyUsage: stats.data.keys[0]?.dailyUsage || 0,
+    monthlyUsage: stats.data.keys[0]?.monthlyUsage || 0,
+    remaining: stats.data.keys[0]?.remaining || 0,
+  };
 }
 ```
 

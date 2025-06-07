@@ -68,8 +68,21 @@ export const config = {
     uri: process.env.MONGODB_URI,
     databaseName: process.env.MONGODB_DATABASE || "ctxbt-signal-flow",
     collectionName: process.env.MONGODB_COLLECTION || "trading-signals",
-    // Target subscriber to filter for (will be dynamic later)
-    targetSubscriber: "abhidavinci",
+  },
+
+  // API Security Configuration
+  apiSecurity: {
+    enabled: process.env.API_SECURITY_ENABLED !== "false", // Default enabled
+    keys: {
+      admin: process.env.API_KEY_ADMIN || "",
+      trading: process.env.API_KEY_TRADING || "",
+      readOnly: process.env.API_KEY_READ_ONLY || "",
+    },
+    rateLimiting: {
+      enabled: process.env.RATE_LIMITING_ENABLED !== "false", // Default enabled
+      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000"), // 15 minutes
+      defaultMax: parseInt(process.env.RATE_LIMIT_DEFAULT_MAX || "100"),
+    },
   },
 };
 
@@ -88,5 +101,27 @@ export const validateConfig = (): void => {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`
     );
+  }
+
+  // Validate API security configuration
+  if (config.apiSecurity.enabled) {
+    const apiKeys = config.apiSecurity.keys;
+    const securityWarnings: string[] = [];
+
+    if (!apiKeys.admin && !apiKeys.trading && !apiKeys.readOnly) {
+      securityWarnings.push("No API keys configured - API will be unsecured");
+    }
+
+    if (apiKeys.admin && apiKeys.admin.length < 32) {
+      securityWarnings.push("Admin API key should be at least 32 characters");
+    }
+
+    if (apiKeys.trading && apiKeys.trading.length < 32) {
+      securityWarnings.push("Trading API key should be at least 32 characters");
+    }
+
+    if (securityWarnings.length > 0) {
+      console.warn("Security warnings:", securityWarnings.join(", "));
+    }
   }
 };

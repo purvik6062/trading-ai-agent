@@ -94,14 +94,13 @@ function showConfiguration() {
             uri: process.env.MONGODB_URI,
             databaseName: process.env.MONGODB_DATABASE || 'ctxbt-signal-flow',
             collectionName: process.env.MONGODB_COLLECTION || 'trading-signals',
-            targetSubscriber: process.env.TARGET_SUBSCRIBER || 'abhidavinci',
         }
     };
 
     console.log('📊 Current Configuration:');
     console.log(`  Database: ${config.mongodb.databaseName}`);
     console.log(`  Collection: ${config.mongodb.collectionName}`);
-    console.log(`  Target Subscriber: ${config.mongodb.targetSubscriber}`);
+    console.log(`  Mode: Multi-User (processes all subscribers)`);
     console.log(`  MongoDB URI: ${config.mongodb.uri.replace(/\/\/.*@/, '//***:***@')}`);
 }
 
