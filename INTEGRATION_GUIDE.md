@@ -2,7 +2,7 @@
 
 ## 📋 Overview
 
-This guide explains how to integrate the **Trading AI Agent Service** with your existing **Next.js application** for **multi-user automated trading**.
+This guide explains how to integrate the **Trading AI Agent Service** with your applications for **multi-user automated trading**. It includes specific examples for **Next.js applications** and general integration patterns.
 
 > **🔐 Security Update**: This guide has been updated to include the new **MongoDB + Redis** API security implementation with API key authentication, rate limiting, and comprehensive access control.
 
