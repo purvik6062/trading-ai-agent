@@ -285,7 +285,7 @@ export class SignalListenerService {
       });
 
       logger.info("MongoDB signal listener is now active", {
-        targetSubscriber: config.mongodb.targetSubscriber,
+        mode: "multi-user",
         allowedTokensCount: Object.keys(TOKEN_ADDRESSES).length,
       });
     } catch (error) {

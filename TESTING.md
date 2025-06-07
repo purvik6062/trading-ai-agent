@@ -11,26 +11,33 @@ This guide covers how to test the enhanced Trading AI Agent with multi-position 
 ## 🚀 Quick Start
 
 ### 1. Basic Connection Test
+
 ```bash
 npm run test:connection
 ```
+
 Tests server health and basic connectivity.
 
 ### 2. Demo Test (Recommended First Run)
+
 ```bash
 npm run test:demo
 ```
+
 Runs connection → single signal → status check sequence.
 
 ### 3. Full Multi-Position Test Suite
+
 ```bash
 npm run test:multi
 ```
+
 Comprehensive test of all multi-position features (15-20 minutes).
 
 ## 🎯 Individual Test Commands
 
 ### Basic Tests
+
 ```bash
 # Test server connection
 npm run test:connection
@@ -42,7 +49,115 @@ npm run test:single
 npm run test:status
 ```
 
+## 🧪 Test Architecture
+
+### **Test Scripts Overview**
+
+The testing system consists of **4 main test scripts** that work together:
+
+```
+📦 Your Trading System
+├── 🏭 Production Code (src/)
+├── 🧪 Test Scripts (root folder)
+│   ├── test-quickstart.js      ← Start Here (4 steps)
+│   ├── test-individual.js      ← Test Specific Features
+│   ├── test-script-multiposition.js ← Full Test Suite
+│   └── test-script.js          ← Original (Legacy)
+└── ⚙️ Configuration
+    └── package.json (npm commands)
+```
+
+### **1. test-quickstart.js** - "Is Everything Working?"
+
+**Purpose**: Quick 4-step health check  
+**When to use**: First time setup, basic verification
+
+```javascript
+// What it does:
+Step 1: Check server connection     ← Can I reach the server?
+Step 2: Check current positions     ← What's already running?
+Step 3: Send one simple signal      ← Can I create a position?
+Step 4: Final status check          ← Did it work?
+```
+
+### **2. test-individual.js** - "Test One Thing at a Time"
+
+**Purpose**: Test specific features in isolation  
+**When to use**: Debugging, focused testing
+
+Available individual tests:
+
+- `connection` - Basic server health
+- `single` - One signal processing
+- `multiple` - Multiple same token (AAVE)
+- `conflict` - Buy vs Put conflicts (ARB)
+- `different` - Multiple tokens (WETH, UNI, BAL, etc.)
+- `risk` - Risk management limits
+- `limit` - Position limits (3 per token)
+- `quick` - 2-minute exit demo
+- `status` - Current system status
+- `monitor` - Live monitoring (3 minutes)
+
+### **3. test-script-multiposition.js** - "Full System Test"
+
+**Purpose**: Comprehensive test of ALL multi-position features  
+**When to use**: Complete validation, before production
+
+Test phases:
+
+1. **Legacy Tests** - Original functionality
+2. **Multi-Position Tests** - New features
+3. **Live Monitoring** - Real-time demo (3 min)
+4. **Final Status** - Summary
+
+### **4. test-script.js** - "Original System"
+
+**Purpose**: Test original functionality (preserved for compatibility)  
+**When to use**: Verify nothing broke
+
+## 🔗 Token Verification
+
+### **Available Tokens in TOKEN_ADDRESSES**
+
+All test tokens are verified to exist in `src/config/enzymeContracts.ts`:
+
+#### **Base Tokens Used in Tests**
+
+- ✅ **AAVE** - DeFi lending protocol token
+- ✅ **ARB** - Arbitrum Layer 2 token
+- ✅ **BAL** - Balancer protocol token
+- ✅ **COMP** - Compound governance token
+- ✅ **CRV** - Curve DAO token
+- ✅ **GMX** - Arbitrum perpetual exchange
+- ✅ **LINK** - Chainlink oracle network
+- ✅ **OP** - Optimism Layer 2 token
+- ✅ **UNI** - Uniswap governance token
+- ✅ **WBTC** - Wrapped Bitcoin
+- ✅ **WETH** - Wrapped Ethereum
+
+#### **Additional Available Tokens**
+
+CBETH, CVX, DAI, EZETH, FRAX, GHO, GRT, IBTC, LUSD, MLN, OSETH, RDNT, RETH, RSETH, SOL, SUSDE, SWETH, TBTC, USDC, USDE, USDT, WAVAX, WBNB, WEETH, WSTETH, XUSD
+
+### **Current Test Token Usage**
+
+| **Test Scenario** | **Token** | **Signal Type** | **Purpose**                 |
+| ----------------- | --------- | --------------- | --------------------------- |
+| Same Token #1     | AAVE      | Buy             | Multi-position same token   |
+| Same Token #2     | AAVE      | Buy             | Position merging/separation |
+| Same Token #3     | AAVE      | Buy             | Position limit testing      |
+| Conflict #1       | ARB       | Buy             | Conflict resolution         |
+| Conflict #2       | ARB       | Put Options     | Opposing signal             |
+| Multi Token #1    | WETH      | Buy             | Parallel management         |
+| Multi Token #2    | UNI       | Buy             | Different tokens            |
+| Multi Token #3    | BAL       | Put Options     | Put options testing         |
+| Additional #1     | COMP      | Buy             | DeFi governance             |
+| Additional #2     | OP        | Buy             | Layer 2 scaling             |
+| Risk Test         | WBTC      | Buy             | Large position limits       |
+| Quick Exit        | CRV       | Buy             | 2-minute monitoring         |
+
 ### Multi-Position Tests
+
 ```bash
 # Test multiple positions for same token (AAVE)
 npm run test:multiple
@@ -58,6 +173,7 @@ npm run test:limit
 ```
 
 ### Advanced Tests
+
 ```bash
 # Test risk management scenarios
 npm run test:risk
@@ -70,6 +186,7 @@ npm run test:monitor
 ```
 
 ### Menu System
+
 ```bash
 # Show interactive test menu
 npm run test:menu
@@ -78,7 +195,9 @@ npm run test:menu
 ## 📁 Test Files Overview
 
 ### 1. `test-script-multiposition.js`
+
 **Comprehensive Test Suite**
+
 - ✅ Legacy functionality preservation
 - ✅ Multi-position management
 - ✅ Conflict resolution (Buy vs Sell)
@@ -89,14 +208,18 @@ npm run test:menu
 - ✅ Real-time position tracking
 
 ### 2. `test-individual.js`
+
 **Individual Test Runner**
+
 - 🎯 Focused testing of specific features
 - 📝 Command-line interface
 - ⚡ Quick individual test execution
 - 📊 Detailed result reporting
 
 ### 3. `test-script.js` (Legacy)
+
 **Original Test Script**
+
 - 🔄 Preserved for backward compatibility
 - ✅ Basic signal processing
 - ⏰ Quick exit functionality
@@ -104,26 +227,34 @@ npm run test:menu
 ## 🔬 Test Scenarios Explained
 
 ### 1. Multiple Same Token Positions (AAVE)
+
 Tests the system's ability to handle multiple buy signals for the same token:
+
 - **Signal 1**: AAVE @ $180.5, targets [190, 200, 210]
-- **Signal 2**: AAVE @ $182.0, targets [195, 205, 215] 
+- **Signal 2**: AAVE @ $182.0, targets [195, 205, 215]
 - **Signal 3**: AAVE @ $179.0, targets [188, 198, 208]
 
-**Expected Behavior**: 
+**Expected Behavior**:
+
 - First two may merge or remain separate based on conflict resolution
 - Third may be rejected if position limit (3) is reached
 
 ### 2. Conflicting Signals (ARB)
+
 Tests conflict resolution between opposing signals:
+
 - **Buy Signal**: ARB @ $1.25, targets [1.35, 1.45, 1.55]
 - **Put Signal**: ARB @ $1.28, targets [1.2, 1.1, 1.0]
 
 **Expected Behavior**:
+
 - System applies conflict resolution strategy (default: risk_based)
 - Lower risk signal wins or signals are managed separately
 
 ### 3. Multiple Different Tokens
+
 Tests parallel management of different assets:
+
 - **WETH**: Buy signal @ $2450
 - **UNI**: Buy signal @ $8.5
 - **BAL**: Put options @ $4.2
@@ -131,24 +262,30 @@ Tests parallel management of different assets:
 - **OP**: Buy signal @ $2.15
 
 **Expected Behavior**:
+
 - All positions should be created successfully
 - Each managed independently
 - Grouped monitoring and risk management
 
 ### 4. Risk Management Scenarios
+
 Tests exposure and position limits:
+
 - **Large Position**: WBTC with high exposure
 - **Position Limits**: 4th AAVE position (should be rejected)
 - **Exposure Limits**: Total and per-token exposure checks
 
 ### 5. Quick Exit Monitoring
+
 Tests real-time exit automation:
+
 - **Quick Position**: CRV with 2-minute exit time
 - **Live Monitoring**: Real-time price checks and automated exits
 
 ## 📊 Understanding Test Output
 
 ### Position Status Response
+
 ```json
 {
   "total": 5,
@@ -175,6 +312,7 @@ Tests real-time exit automation:
 ```
 
 ### Conflict Resolution Response
+
 ```json
 {
   "success": false,
@@ -189,7 +327,9 @@ Tests real-time exit automation:
 ## 🔧 Configuration
 
 ### Multi-Position Settings
+
 The test suite uses these default configurations:
+
 ```javascript
 multiPosition: {
   maxConcurrentPositions: 15,
@@ -213,26 +353,33 @@ multiPosition: {
 ### Common Issues
 
 **1. Connection Failed**
+
 ```bash
 ❌ Health Check Failed: connect ECONNREFUSED 127.0.0.1:3000
 ```
+
 **Solution**: Make sure your server is running on port 3000
 
 **2. Positions Not Created**
+
 ```bash
 ❌ Signal Processing Failed: Position size outside allowed range
 ```
+
 **Solution**: Check your trading configuration limits
 
 **3. All Positions Rejected**
+
 ```bash
 ❌ Maximum concurrent positions (15) reached
 ```
+
 **Solution**: Clear existing positions or increase limits
 
 ### Test Debugging
 
 **Enable Verbose Logging**:
+
 ```bash
 DEBUG=* npm run test:status
 ```
@@ -240,6 +387,7 @@ DEBUG=* npm run test:status
 **Check Server Logs**: Monitor your server console for GameEngine activity
 
 **Manual Position Check**:
+
 ```bash
 curl http://localhost:3000/positions | jq
 ```
@@ -247,12 +395,14 @@ curl http://localhost:3000/positions | jq
 ## 📈 Monitoring Real-Time Activity
 
 ### Server Logs to Watch
+
 - `🤖 GameEngine: Position created and trade executed`
 - `🤖 GameEngine: Monitoring X positions across Y groups`
 - `🤖 GameEngine: Signal not executed - [reason]`
 - `🤖 GameEngine: Conflict resolution: [action]`
 
 ### Key Metrics
+
 - **Active Positions**: Current number of open positions
 - **Position Groups**: Number of token groups being managed
 - **Total Exposure**: Sum of all position values
@@ -261,6 +411,7 @@ curl http://localhost:3000/positions | jq
 ## 🎯 Best Practices for Testing
 
 ### 1. Start Small
+
 ```bash
 npm run test:connection  # Always start here
 npm run test:single      # Test one signal
@@ -268,6 +419,7 @@ npm run test:status      # Check what happened
 ```
 
 ### 2. Progressive Testing
+
 ```bash
 npm run test:multiple    # Multiple same token
 npm run test:different   # Multiple different tokens
@@ -275,12 +427,14 @@ npm run test:conflict    # Conflicting signals
 ```
 
 ### 3. Monitor Live Activity
+
 ```bash
 npm run test:quick       # 2-minute exit test
 npm run test:monitor     # 3-minute monitoring
 ```
 
 ### 4. Comprehensive Validation
+
 ```bash
 npm run test:multi       # Full test suite
 ```
@@ -288,7 +442,9 @@ npm run test:multi       # Full test suite
 ## 📝 Test Data
 
 ### Pre-configured Test Signals
+
 The test suite includes realistic trading signals for:
+
 - **AAVE**: DeFi token with strong fundamentals
 - **ARB**: Layer 2 token with growth potential
 - **WETH**: Ethereum with institutional interest
@@ -298,11 +454,13 @@ The test suite includes realistic trading signals for:
 - **OP**: Optimism Layer 2 scaling
 - **GMX**: Arbitrum perpetual exchange
 - **WBTC**: Bitcoin wrapper token
-- **LINK**: Oracle network token  
+- **LINK**: Oracle network token
 - **CRV**: Curve DAO token
 
 ### Signal Formats
+
 All test signals include:
+
 - ✅ Token identification (symbol and CoinGecko ID)
 - ✅ Signal type (Buy, Put Options, Hold)
 - ✅ Current price and targets
@@ -313,17 +471,20 @@ All test signals include:
 ## 🚨 Emergency Procedures
 
 ### Stop All Tests
+
 ```bash
 Ctrl+C  # Stop current test
 ```
 
 ### Clear Test Environment
+
 ```bash
 # Restart server to clear all positions
 npm run dev
 ```
 
 ### Reset Test State
+
 1. Stop server
 2. Clear any persistent storage
 3. Restart server
@@ -332,6 +493,7 @@ npm run dev
 ## 📞 Support
 
 If you encounter issues:
+
 1. Check server logs for error details
 2. Verify all dependencies are installed
 3. Ensure MultiPositionManager is properly configured
@@ -341,4 +503,4 @@ If you encounter issues:
 
 **Happy Testing! 🚀**
 
-The multi-position management system is designed to handle complex trading scenarios with intelligence and safety. These tests will help you verify all functionality works as expected. 
+The multi-position management system is designed to handle complex trading scenarios with intelligence and safety. These tests will help you verify all functionality works as expected.
