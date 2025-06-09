@@ -13,6 +13,7 @@ import { TradingSignal, SignalType } from "./types/trading";
 import { SignalListenerService } from "./services/signalListenerService";
 import { MongoUserService } from "./services/mongoUserService";
 import { MultiUserSignalService } from "./services/multiUserSignalService";
+import { errorManager } from "./utils/errorManager";
 import { ethers } from "ethers";
 
 const app = express();
@@ -159,6 +160,8 @@ app.get("/health", async (req, res) => {
       ? await userService.getSessionStats()
       : null;
 
+    const errorSummary = errorManager.getErrorSummary();
+
     res.json({
       status: "healthy",
       timestamp: new Date().toISOString(),
@@ -181,6 +184,11 @@ app.get("/health", async (req, res) => {
           connected: userService?.isConnectedToMongoDB() || false,
           stats: userServiceStats,
         },
+      },
+      errorStats: {
+        totalUniqueErrors: errorSummary.totalUniqueErrors,
+        totalSuppressed: errorSummary.totalSuppressed,
+        recentErrors: errorSummary.topErrors.slice(0, 3), // Show top 3 errors
       },
     });
   } catch (error) {
@@ -582,6 +590,173 @@ app.get("/users/:username/positions", async (req, res) => {
 });
 
 /**
+ * Recover positions from persistence (admin endpoint)
+ */
+app.post("/admin/recovery/positions", async (req, res) => {
+  try {
+    if (!multiUserSignalService) {
+      return res.status(503).json({
+        error: "Multi-user signal service not available",
+      });
+    }
+
+    // Force reinitialize all position managers to recover positions
+    const activeUsers = await userService.getActiveUsers();
+    const recoveryResults: any[] = [];
+
+    for (const username of activeUsers) {
+      try {
+        const userSession = await userService.getUserSession(username);
+        if (userSession) {
+          const gameEngine = userSession.gameEngineService;
+          const multiPositionManager = (gameEngine as any).multiPositionManager;
+
+          if (
+            multiPositionManager &&
+            multiPositionManager.getPersistenceService
+          ) {
+            const persistenceService =
+              multiPositionManager.getPersistenceService();
+            const userRecovery =
+              await persistenceService.recoverActivePositions();
+            recoveryResults.push({
+              username,
+              ...userRecovery,
+            });
+          }
+        }
+      } catch (error) {
+        recoveryResults.push({
+          username,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Position recovery completed",
+      users: activeUsers.length,
+      results: recoveryResults,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error in position recovery:", error);
+    res.status(500).json({
+      error: "Failed to recover positions",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get position recovery status and statistics
+ */
+app.get("/admin/recovery/status", async (req, res) => {
+  try {
+    if (!userService) {
+      return res.status(503).json({
+        error: "User service not available",
+      });
+    }
+
+    const activeUsers = await userService.getActiveUsers();
+    const userStats: any[] = [];
+
+    for (const username of activeUsers) {
+      try {
+        const userSession = await userService.getUserSession(username);
+        if (userSession) {
+          const gameEngine = userSession.gameEngineService;
+          const multiPositionManager = (gameEngine as any).multiPositionManager;
+
+          if (
+            multiPositionManager &&
+            multiPositionManager.getPersistenceService
+          ) {
+            const persistenceService =
+              multiPositionManager.getPersistenceService();
+            const userPositions =
+              await persistenceService.getUserActivePositions(username);
+            const positionStats = await persistenceService.getPositionStats();
+
+            userStats.push({
+              username,
+              vaultAddress: userSession.vaultAddress,
+              activePositions: userPositions.length,
+              positionStats,
+            });
+          }
+        }
+      } catch (error) {
+        userStats.push({
+          username,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      totalUsers: activeUsers.length,
+      userStats,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error getting recovery status:", error);
+    res.status(500).json({
+      error: "Failed to get recovery status",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Get user's persisted positions
+ */
+app.get("/users/:username/positions/persisted", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const userSession = await userService.getUserSession(username);
+    if (!userSession) {
+      return res.status(404).json({
+        error: "User session not found or inactive",
+      });
+    }
+
+    const gameEngine = userSession.gameEngineService;
+    const multiPositionManager = (gameEngine as any).multiPositionManager;
+
+    if (!multiPositionManager || !multiPositionManager.getPersistenceService) {
+      return res.status(503).json({
+        error: "Position persistence not available",
+      });
+    }
+
+    const persistenceService = multiPositionManager.getPersistenceService();
+    const persistedPositions =
+      await persistenceService.getUserActivePositions(username);
+    const positionStats = await persistenceService.getPositionStats();
+
+    res.json({
+      success: true,
+      username,
+      vaultAddress: userSession.vaultAddress,
+      persistedPositions,
+      stats: positionStats,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error getting user persisted positions:", error);
+    res.status(500).json({
+      error: "Failed to get persisted positions",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
  * Process signal for specific user (testing endpoint)
  */
 app.post("/users/:username/signal", async (req, res) => {
@@ -621,6 +796,67 @@ app.post("/users/:username/signal", async (req, res) => {
     res.status(500).json({
       error: "Failed to process signal for user",
       details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * Error management endpoints
+ */
+app.get("/admin/errors/summary", (req, res) => {
+  try {
+    const summary = errorManager.getErrorSummary();
+    res.json({
+      success: true,
+      ...summary,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error getting error summary:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/admin/errors/stats", (req, res) => {
+  try {
+    const stats = errorManager.getErrorStats();
+    const statsArray = Array.from(stats.entries()).map(([key, count]) => ({
+      errorKey: key,
+      ...count,
+    }));
+
+    res.json({
+      success: true,
+      errors: statsArray,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error getting error stats:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.post("/admin/errors/cleanup", (req, res) => {
+  try {
+    const { olderThanMinutes = 60 } = req.body;
+    errorManager.cleanup(olderThanMinutes);
+
+    res.json({
+      success: true,
+      message: `Cleaned up errors older than ${olderThanMinutes} minutes`,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Error cleaning up errors:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
     });
   }
 });

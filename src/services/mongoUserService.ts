@@ -227,6 +227,13 @@ export class MongoUserService {
       const gameEngineService = new GameEngineService(gameEngineConfig);
       await gameEngineService.init();
 
+      // Set user context in the multi-position manager for persistence
+      const multiPositionManager = (gameEngineService as any)
+        .multiPositionManager;
+      if (multiPositionManager && multiPositionManager.setUserContext) {
+        multiPositionManager.setUserContext(username);
+      }
+
       // Create session
       session = {
         userId: username,

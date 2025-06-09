@@ -43,7 +43,45 @@ Maps usernames to vault addresses:
 }
 ```
 
-### 3. `user_trading_settings` (Optional)
+### 3. `positions` (New - Critical for Recovery)
+
+Persists active trading positions across service restarts:
+
+```javascript
+{
+  "_id": "...",
+  "id": "pos_1704067200000_abc123def",
+  "username": "testuser",
+  "vaultAddress": "0x1234567890123456789012345678901234567890",
+  "signal": {
+    "token": "AAVE",
+    "tokenId": "aave",
+    "signal": "Buy",
+    "currentPrice": 180.5,
+    "targets": [190, 200, 210],
+    "stopLoss": 170,
+    "maxExitTime": "2024-01-10T12:00:00.000Z"
+  },
+  "status": "active",
+  "entryExecuted": true,
+  "exitExecuted": false,
+  "actualEntryPrice": 181.2,
+  "amountSwapped": 1000,
+  "remainingAmount": 1000,
+  "trailingStop": {
+    "isActive": true,
+    "peakPrice": 185.3,
+    "trailPercent": 5,
+    "targetsHit": [false, false, false]
+  },
+  "createdAt": "2024-01-01T12:00:00.000Z",
+  "updatedAt": "2024-01-01T13:30:00.000Z",
+  "lastMonitoredAt": "2024-01-01T13:30:00.000Z",
+  "recoveredAt": "2024-01-01T14:00:00.000Z"
+}
+```
+
+### 4. `user_trading_settings` (Optional)
 
 User-specific trading preferences:
 
@@ -72,6 +110,13 @@ The service automatically:
   - `user_vault_mappings.vaultAddress`
   - `user_vault_mappings.isActive`
   - `user_vault_mappings.{isActive, username}` (compound)
+  - `positions.id` (unique)
+  - `positions.status`
+  - `positions.username`
+  - `positions.vaultAddress`
+  - `positions.signal.tokenId`
+  - `positions.{status, username}` (compound)
+  - `positions.{status, signal.maxExitTime}` (compound)
 
 ## 🧪 Test Your Setup
 
@@ -142,12 +187,45 @@ db.user_vault_mappings.insertMany([
 ]);
 ```
 
+## 🔄 Position Recovery Testing
+
+Test the new position persistence and recovery:
+
+```bash
+# 1. Create positions via API
+curl -X POST http://localhost:3000/signal \
+  -H "Content-Type: application/json" \
+  -d '{"signal_data": {"token": "AAVE", "signal": "Buy", "currentPrice": 180}}'
+
+# 2. Check positions are persisted
+curl http://localhost:3000/admin/recovery/status
+
+# 3. Restart the service
+# Stop service (Ctrl+C)
+# Start service again (npm start)
+
+# 4. Verify positions recovered
+curl http://localhost:3000/admin/recovery/status
+
+# 5. Manual recovery trigger (if needed)
+curl -X POST http://localhost:3000/admin/recovery/positions
+```
+
 ## ✅ Ready to Go!
 
 Your MongoDB is now set up for:
 
 - 🎯 **Trading signals** (existing)
 - 👥 **User management** (new)
+- 💾 **Position persistence** (new - critical for recovery)
 - ⚙️ **Trading settings** (optional)
 
 All using the **same database** and **same connection**! 🚀
+
+### 🔥 Key Benefits of Position Persistence:
+
+1. **Service Restart Safety** - No lost positions during restarts
+2. **Crash Recovery** - Automatic position recovery on startup
+3. **Multi-User Support** - Each user's positions tracked separately
+4. **Monitoring Continuity** - Trailing stops and targets preserved
+5. **Audit Trail** - Complete position history and recovery logs

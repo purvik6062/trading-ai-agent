@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from "axios";
 import { config } from "../config";
 import { TokenPrice } from "../types/trading";
 import { logger } from "../utils/logger";
+import { errorManager } from "../utils/errorManager";
 
 export class CoinGeckoService {
   private api: AxiosInstance;
@@ -76,7 +77,10 @@ export class CoinGeckoService {
       logger.warn(`No price data found for token: ${tokenId}`);
       return null;
     } catch (error) {
-      logger.error(`Error fetching price for ${tokenId}:`, error);
+      errorManager.logError(`coingecko-getTokenPrice-${tokenId}`, error, {
+        tokenId,
+        operation: "getTokenPrice",
+      });
       return null;
     }
   }
@@ -142,7 +146,10 @@ export class CoinGeckoService {
 
       return [...cachedPrices, ...newPrices];
     } catch (error) {
-      logger.error("Error fetching multiple token prices:", error);
+      errorManager.logError("coingecko-getMultipleTokenPrices", error, {
+        tokenIds: tokenIds,
+        operation: "getMultipleTokenPrices",
+      });
       return [];
     }
   }
@@ -174,7 +181,10 @@ export class CoinGeckoService {
       logger.warn(`No token found for symbol: ${symbol}`);
       return null;
     } catch (error) {
-      logger.error(`Error searching for token ${symbol}:`, error);
+      errorManager.logError(`coingecko-searchToken-${symbol}`, error, {
+        symbol,
+        operation: "searchToken",
+      });
       return null;
     }
   }

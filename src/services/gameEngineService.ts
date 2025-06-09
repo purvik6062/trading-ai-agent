@@ -70,6 +70,14 @@ export class GameEngineService {
     try {
       logger.info("🤖 GameEngine: Initializing service...");
 
+      // Initialize multi-position manager with persistence recovery
+      const recoveryResult = await this.multiPositionManager.init();
+      logger.info("🔄 Position recovery completed", {
+        totalRecovered: recoveryResult.totalRecovered,
+        activePositions: recoveryResult.activePositions,
+        expiredPositions: recoveryResult.expiredPositions,
+      });
+
       // Create trading functions
       const tradingFunctions = this.createTradingFunctions();
 
@@ -96,6 +104,7 @@ export class GameEngineService {
             trailingStopStats: this.trailingStopService.getTrailingStopStats(),
             walletAddress: await this.enzymeService.getWalletAddress(),
             timestamp: new Date().toISOString(),
+            recoveryInfo: recoveryResult,
           };
         },
       });

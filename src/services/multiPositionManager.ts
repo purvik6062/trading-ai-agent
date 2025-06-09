@@ -6,10 +6,13 @@ import {
   SignalType,
   TradeExecution,
   TargetExit,
+  PersistedPosition,
+  PositionRecoveryResult,
 } from "../types/trading";
 import { TrailingStopService } from "./trailingStopService";
 import { EnzymeVaultService, SwapStrategy } from "./enzymeService";
 import { CoinGeckoService } from "./coinGeckoService";
+import { PositionPersistenceService } from "./positionPersistenceService";
 import { logger } from "../utils/logger";
 
 export interface PositionConflictResolution {
@@ -56,8 +59,10 @@ export class MultiPositionManager {
   private trailingStopService: TrailingStopService;
   private enzymeService: EnzymeVaultService;
   private coinGeckoService: CoinGeckoService;
+  private persistenceService: PositionPersistenceService;
   private config: MultiPositionConfig;
   private conflictQueue: Array<{ signal: TradingSignal; timestamp: Date }> = [];
+  private currentUsername?: string; // Track current user context
 
   constructor(
     enzymeService: EnzymeVaultService,
@@ -67,6 +72,7 @@ export class MultiPositionManager {
     this.enzymeService = enzymeService;
     this.coinGeckoService = coinGeckoService;
     this.trailingStopService = new TrailingStopService();
+    this.persistenceService = new PositionPersistenceService();
 
     // Default configuration
     this.config = {
@@ -85,6 +91,71 @@ export class MultiPositionManager {
       },
       ...config,
     };
+  }
+
+  /**
+   * Initialize persistence service and recover positions
+   */
+  async init(): Promise<PositionRecoveryResult> {
+    try {
+      await this.persistenceService.connect();
+      const recoveryResult =
+        await this.persistenceService.recoverActivePositions();
+
+      // Load recovered positions into memory
+      for (const persistedPosition of recoveryResult.recoveredPositions) {
+        const position: Position = {
+          id: persistedPosition.id,
+          signal: persistedPosition.signal,
+          trailingStop: persistedPosition.trailingStop,
+          currentPrice: persistedPosition.currentPrice,
+          entryExecuted: persistedPosition.entryExecuted,
+          exitExecuted: persistedPosition.exitExecuted,
+          status: persistedPosition.status,
+          createdAt: persistedPosition.createdAt,
+          updatedAt: persistedPosition.updatedAt,
+          entryTxHash: persistedPosition.entryTxHash,
+          exitTxHash: persistedPosition.exitTxHash,
+          actualEntryPrice: persistedPosition.actualEntryPrice,
+          amountSwapped: persistedPosition.amountSwapped,
+          tokenAmountReceived: persistedPosition.tokenAmountReceived,
+          remainingAmount: persistedPosition.remainingAmount,
+          targetExitHistory: persistedPosition.targetExitHistory,
+        };
+
+        this.activePositions.set(position.id, position);
+        await this.updatePositionGroup(position);
+
+        // Add to trailing stop service if active
+        if (position.status === PositionStatus.ACTIVE) {
+          this.trailingStopService.addPosition(position);
+        }
+      }
+
+      logger.info(
+        "✅ MultiPositionManager initialized with position recovery",
+        {
+          totalRecovered: recoveryResult.totalRecovered,
+          activePositions: recoveryResult.activePositions,
+          expiredPositions: recoveryResult.expiredPositions,
+        }
+      );
+
+      return recoveryResult;
+    } catch (error) {
+      logger.error(
+        "❌ Failed to initialize MultiPositionManager with persistence:",
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Set current user context for position operations
+   */
+  setUserContext(username: string): void {
+    this.currentUsername = username;
   }
 
   /**
@@ -427,6 +498,18 @@ export class MultiPositionManager {
     this.activePositions.set(position.id, position);
     await this.updatePositionGroup(position);
 
+    // Save to persistence
+    try {
+      await this.persistenceService.savePosition(
+        position,
+        this.currentUsername,
+        this.enzymeService.getVaultAddress()
+      );
+    } catch (error) {
+      logger.error(`Failed to persist position ${position.id}:`, error);
+      // Continue anyway - position is still in memory
+    }
+
     logger.info(`Created new position: ${position.id} for ${signal.token}`, {
       signal: signal.signal,
       positionSize,
@@ -738,6 +821,20 @@ export class MultiPositionManager {
       position.status = PositionStatus.CLOSED;
       position.updatedAt = new Date();
 
+      // Update persistence
+      try {
+        await this.persistenceService.updatePositionStatus(
+          position.id,
+          PositionStatus.CLOSED,
+          position.exitTxHash
+        );
+      } catch (error) {
+        logger.error(
+          `Failed to update position status in persistence: ${position.id}`,
+          error
+        );
+      }
+
       // Remove from active positions
       this.activePositions.delete(position.id);
       this.trailingStopService.updatePositionStatus(
@@ -939,5 +1036,34 @@ export class MultiPositionManager {
       positionGroups: this.positionGroups.size,
       conflictingSignals: this.conflictQueue.length,
     };
+  }
+
+  /**
+   * Save position update to persistence
+   */
+  async savePositionUpdate(position: Position): Promise<void> {
+    try {
+      await this.persistenceService.savePosition(
+        position,
+        this.currentUsername,
+        this.enzymeService.getVaultAddress()
+      );
+    } catch (error) {
+      logger.error(`Failed to save position update ${position.id}:`, error);
+    }
+  }
+
+  /**
+   * Get persistence service for external access
+   */
+  getPersistenceService(): PositionPersistenceService {
+    return this.persistenceService;
+  }
+
+  /**
+   * Disconnect persistence service
+   */
+  async disconnect(): Promise<void> {
+    await this.persistenceService.disconnect();
   }
 }

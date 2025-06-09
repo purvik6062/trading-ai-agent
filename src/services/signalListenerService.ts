@@ -142,7 +142,10 @@ export class SignalListenerService {
 
     // Convert to uppercase for comparison (TOKEN_ADDRESSES keys are uppercase)
     const tokenSymbol = tokenMentioned.toUpperCase();
-
+    console.log(tokenSymbol);
+    console.log(
+      Object.prototype.hasOwnProperty.call(TOKEN_ADDRESSES, tokenSymbol)
+    );
     // Check if the token exists in our TOKEN_ADDRESSES object
     return Object.prototype.hasOwnProperty.call(TOKEN_ADDRESSES, tokenSymbol);
   }
