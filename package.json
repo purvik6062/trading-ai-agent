@@ -35,6 +35,10 @@
     "errors:stats": "node scripts/view-errors.js stats",
     "errors:cleanup": "node scripts/view-errors.js cleanup",
     "errors:cleanup:30": "node scripts/view-errors.js cleanup 30",
+    "debug:maxexittime": "node scripts/debug-maxexittime.js",
+    "debug:maxexittime:test": "node scripts/debug-maxexittime.js test",
+    "debug:maxexittime:debug": "node scripts/debug-maxexittime.js debug",
+    "verify:maxexittime": "node scripts/verify-maxexittime.js",
     "generate-keys": "ts-node src/utils/keyGenerator.ts",
     "security:check": "npm run build && node -e \"require('./dist/config').validateConfig()\""
   },

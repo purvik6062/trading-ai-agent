@@ -137,6 +137,17 @@ export class SignalParser {
       const maxExitTime = new Date();
       maxExitTime.setDate(maxExitTime.getDate() + 7);
 
+      // Log warning about 7-day fallback for transparency
+      logger.warn(
+        "⚠️ Applied 7-day maxExitTime fallback for legacy text signal",
+        {
+          token,
+          signal: signalText,
+          fallbackMaxExitTime: maxExitTime.toISOString(),
+          reason: "Legacy text format has no maxExitTime field",
+        }
+      );
+
       const parsedSignal: TradingSignal = {
         token,
         tokenId,
@@ -191,6 +202,26 @@ export class SignalParser {
         return false;
       }
 
+      // Validate maxExitTime (ENHANCED VALIDATION)
+      if (!signal.maxExitTime) {
+        logger.warn("Invalid signal: maxExitTime is required");
+        return false;
+      }
+
+      const exitTime = new Date(signal.maxExitTime);
+      if (isNaN(exitTime.getTime())) {
+        logger.warn("Invalid signal: maxExitTime is not a valid date");
+        return false;
+      }
+
+      if (exitTime <= new Date()) {
+        logger.warn("Invalid signal: maxExitTime is in the past", {
+          maxExitTime: signal.maxExitTime,
+          currentTime: new Date().toISOString(),
+        });
+        return false;
+      }
+
       // Signal-specific validation
       switch (signal.signal) {
         case SignalType.BUY:
@@ -232,7 +263,11 @@ export class SignalParser {
           return false;
       }
 
-      logger.debug("Signal validation passed");
+      logger.debug("Signal validation passed", {
+        token: signal.token,
+        maxExitTime: signal.maxExitTime,
+        validUntil: new Date(signal.maxExitTime).toLocaleString(),
+      });
       return true;
     } catch (error) {
       logger.error("Error validating signal:", error);

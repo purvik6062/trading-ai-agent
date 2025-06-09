@@ -656,6 +656,10 @@ export class MultiPositionManager {
   async monitorAllPositions(): Promise<void> {
     if (this.activePositions.size === 0) return;
 
+    logger.debug(
+      `🔍 Monitoring ${this.activePositions.size} active positions for user: ${this.currentUsername || "unknown"}`
+    );
+
     const positions = Array.from(this.activePositions.values());
     const uniqueTokenIds = [...new Set(positions.map((p) => p.signal.tokenId))];
 
@@ -716,6 +720,21 @@ export class MultiPositionManager {
         currentPrice,
         "Stop loss triggered"
       );
+      return; // Exit early to avoid duplicate processing
+    }
+
+    // Check for time-based exit conditions (CRITICAL FIX)
+    const shouldTimeExitGroup = group.positions.some((p) =>
+      this.shouldTimeExit(p)
+    );
+
+    if (shouldTimeExitGroup) {
+      await this.executeGroupFullExit(
+        group,
+        currentPrice,
+        "Time-based exit (maxExitTime reached)"
+      );
+      return; // Exit early to avoid duplicate processing
     }
   }
 
@@ -993,7 +1012,21 @@ export class MultiPositionManager {
 
   private shouldTimeExit(position: Position): boolean {
     const maxExitTime = new Date(position.signal.maxExitTime);
-    return new Date() >= maxExitTime;
+    const now = new Date();
+    const shouldExit = now >= maxExitTime;
+
+    if (shouldExit) {
+      logger.info(`⏰ Position ${position.id} reached maxExitTime`, {
+        token: position.signal.token,
+        maxExitTime: position.signal.maxExitTime,
+        currentTime: now.toISOString(),
+        minutesOverdue: Math.round(
+          (now.getTime() - maxExitTime.getTime()) / (1000 * 60)
+        ),
+      });
+    }
+
+    return shouldExit;
   }
 
   private calculatePnL(
