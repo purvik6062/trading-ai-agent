@@ -7,6 +7,7 @@ import {
 } from "@virtuals-protocol/game";
 import { config } from "../config";
 import { logger } from "../utils/logger";
+import { errorManager } from "../utils/errorManager";
 import {
   TradingSignal,
   Position,
@@ -158,7 +159,10 @@ export class GameEngineService {
         "🤖 GameEngine: Service initialized successfully with multi-position management"
       );
     } catch (error) {
-      logger.error("🤖 GameEngine: Error initializing service:", error);
+      errorManager.logError("gameengine-initialization", error, {
+        operation: "init",
+        vaultAddress: this.vaultAddress,
+      });
       throw error;
     }
   }
@@ -178,7 +182,9 @@ export class GameEngineService {
           await this.multiPositionManager.monitorAllPositions();
         }
       } catch (error) {
-        logger.error("🤖 GameEngine: Error in centralized monitoring:", error);
+        errorManager.logError("gameengine-monitoring", error, {
+          operation: "centralizedMonitoring",
+        });
       }
     }, 30000); // 30 seconds
 
@@ -570,7 +576,10 @@ export class GameEngineService {
 
       logger.info("🤖 GameEngine: Signal processed");
     } catch (error) {
-      logger.error("🤖 GameEngine: Error processing signal:", error);
+      errorManager.logError("gameengine-signal-processing", error, {
+        operation: "processSignal",
+        message: signalMessage,
+      });
       throw error;
     }
   }
@@ -585,7 +594,9 @@ export class GameEngineService {
       try {
         await this.multiPositionManager.monitorAllPositions();
       } catch (error) {
-        logger.error("🤖 GameEngine: Error in continuous operation:", error);
+        errorManager.logError("gameengine-continuous-operation", error, {
+          operation: "continuousMonitoring",
+        });
       }
     }, intervalSeconds * 1000);
   }
@@ -651,7 +662,10 @@ export class GameEngineService {
 
       return null;
     } catch (error) {
-      logger.error("🤖 GameEngine: Error processing signal:", error);
+      errorManager.logError("gameengine-trading-signal", error, {
+        operation: "processTradingSignal",
+        token: signal?.token,
+      });
       throw error;
     }
   }
