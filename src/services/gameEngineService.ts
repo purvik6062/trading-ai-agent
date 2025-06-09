@@ -478,7 +478,7 @@ export class GameEngineService {
       // Execute trade through Enzyme
       const swapParams: SwapStrategy = {
         fromTokenSymbol: "USDC",
-        toTokenSymbol: position.signal.token,
+        toTokenSymbol: position.signal.tokenMentioned,
         amountPercentage: positionSize,
         maxSlippage: 1.0,
       };

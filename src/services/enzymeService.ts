@@ -92,7 +92,7 @@ export interface SwapParams {
 
 export interface SwapStrategy {
   fromTokenSymbol: string;
-  toTokenSymbol: string;
+  toTokenSymbol: string | any;
   amountPercentage: number;
   maxSlippage?: number;
   useCustomFeeTier?: boolean;
