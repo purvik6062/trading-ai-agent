@@ -56,6 +56,27 @@ X-API-Key: your_api_key_here
 curl -H "X-API-Key: trading_abc123_def456..." https://api.example.com/signal
 ```
 
+## 🎯 Recent Updates & New Features
+
+### 🔄 Position Recovery System
+
+- **Automatic Recovery**: Positions persist across service restarts
+- **Manual Recovery**: Admin-triggered position recovery
+- **User Isolation**: Per-user position recovery and monitoring
+
+### 🚨 Error Management System
+
+- **Smart Rate Limiting**: Prevents console flooding from repeated errors
+- **Error Categorization**: Groups similar errors for better monitoring
+- **Automatic Cleanup**: Removes old error data automatically
+- **Admin Dashboard**: Real-time error monitoring and management
+
+### 📊 Enhanced Monitoring
+
+- **Service Health**: Comprehensive health checks with error statistics
+- **Position Persistence**: Complete position state preservation
+- **User Session Management**: Active user tracking and session recovery
+
 ## 🎯 Integration Steps
 
 ### Step 1: Deploy Trading AI Service
@@ -156,7 +177,29 @@ curl -H "X-API-Key: readonly_your_key_here" http://localhost:3000/health
 
 ### Step 2: Update Your Next.js App
 
-#### 2.1 Create Secure API Integration Service
+#### 2.1 Environment Setup for Next.js
+
+Add the following to your Next.js `.env.local` file:
+
+```bash
+# Trading Service Configuration
+TRADING_SERVICE_URL=http://localhost:3000
+TRADING_SERVICE_API_KEY=integration_your_api_key_here
+
+# For production, use your deployed service URL
+# TRADING_SERVICE_URL=https://your-trading-service.com
+```
+
+#### 2.2 Install Required Dependencies
+
+```bash
+# In your Next.js project
+npm install axios
+# or
+yarn add axios
+```
+
+#### 2.3 Create Secure API Integration Service
 
 ```typescript
 // lib/tradingService.ts
@@ -255,6 +298,45 @@ export class TradingServiceClient {
       ? `/admin/api-keys/stats/usage?keyId=${keyId}`
       : "/admin/api-keys/stats/overview";
     return this.makeRequest(endpoint);
+  }
+
+  // Position Recovery APIs
+  async triggerPositionRecovery() {
+    return this.makeRequest("/admin/recovery/positions", {
+      method: "POST",
+    });
+  }
+
+  async getRecoveryStatus() {
+    return this.makeRequest("/admin/recovery/status");
+  }
+
+  async getUserPersistedPositions(username: string) {
+    return this.makeRequest(`/users/${username}/positions/persisted`);
+  }
+
+  // Error Management APIs (admin only)
+  async getErrorSummary() {
+    return this.makeRequest("/admin/errors/summary");
+  }
+
+  async getErrorStats() {
+    return this.makeRequest("/admin/errors/stats");
+  }
+
+  async cleanupErrors(olderThanMinutes: number = 60) {
+    return this.makeRequest("/admin/errors/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ olderThanMinutes }),
+    });
+  }
+
+  // Process signal for specific user (testing/admin)
+  async processSignalForUser(username: string, signalData: any) {
+    return this.makeRequest(`/users/${username}/signal`, {
+      method: "POST",
+      body: JSON.stringify(signalData),
+    });
   }
 }
 ```
@@ -379,6 +461,29 @@ export function TradingDashboard({ username }: TradingDashboardProps) {
           Active Users:{" "}
           {serviceHealth?.services?.multiUserSignal?.activeUsers || 0}
         </p>
+
+        {/* Error Statistics */}
+        {serviceHealth?.errorStats && (
+          <div className="error-stats">
+            <h4>Error Statistics</h4>
+            <p>Unique Errors: {serviceHealth.errorStats.totalUniqueErrors}</p>
+            <p>Suppressed: {serviceHealth.errorStats.totalSuppressed}</p>
+            {serviceHealth.errorStats.recentErrors?.length > 0 && (
+              <details>
+                <summary>Recent Error Types</summary>
+                <ul>
+                  {serviceHealth.errorStats.recentErrors.map((error, idx) => (
+                    <li key={idx}>
+                      {error.key}: {error.count} occurrences
+                      {error.suppressed > 0 &&
+                        ` (${error.suppressed} suppressed)`}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
       </div>
 
       {/* User Settings */}
@@ -398,6 +503,167 @@ export function TradingDashboard({ username }: TradingDashboardProps) {
       <div className="vault-info">
         <h3>Vault Information</h3>
         <p>Address: {vaultInfo?.vaultAddress}</p>
+        <p>Balance: {vaultInfo?.balance || "Loading..."}</p>
+      </div>
+
+      {/* Active Positions */}
+      <div className="positions">
+        <h3>Active Positions ({positions.length})</h3>
+        {positions.length > 0 ? (
+          <div className="positions-list">
+            {positions.map((position, idx) => (
+              <div key={idx} className="position-card">
+                <h4>{position.tokenSymbol}</h4>
+                <p>Entry: ${position.entryPrice}</p>
+                <p>Current: ${position.currentPrice}</p>
+                <p>
+                  PnL: {position.pnl > 0 ? "+" : ""}
+                  {position.pnl}%
+                </p>
+                <p>Status: {position.status}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>No active positions</p>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+#### 2.4 Add Admin Dashboard Component
+
+```tsx
+// components/AdminDashboard.tsx
+import { useState, useEffect } from "react";
+import { TradingServiceClient } from "@/lib/tradingService";
+
+export function AdminDashboard() {
+  const [recoveryStatus, setRecoveryStatus] = useState(null);
+  const [errorSummary, setErrorSummary] = useState(null);
+  const [errorStats, setErrorStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const tradingService = new TradingServiceClient();
+
+  useEffect(() => {
+    loadAdminData();
+  }, []);
+
+  const loadAdminData = async () => {
+    setLoading(true);
+    try {
+      const [recovery, errors, stats] = await Promise.all([
+        tradingService.getRecoveryStatus(),
+        tradingService.getErrorSummary(),
+        tradingService.getErrorStats(),
+      ]);
+
+      setRecoveryStatus(recovery);
+      setErrorSummary(errors);
+      setErrorStats(stats);
+    } catch (error) {
+      console.error("Error loading admin data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const triggerRecovery = async () => {
+    try {
+      const result = await tradingService.triggerPositionRecovery();
+      alert(`Recovery triggered: ${result.message}`);
+      await loadAdminData();
+    } catch (error) {
+      alert(`Recovery failed: ${error.message}`);
+    }
+  };
+
+  const cleanupErrors = async (minutes: number) => {
+    try {
+      const result = await tradingService.cleanupErrors(minutes);
+      alert(`Cleanup completed: ${result.message}`);
+      await loadAdminData();
+    } catch (error) {
+      alert(`Cleanup failed: ${error.message}`);
+    }
+  };
+
+  if (loading) return <div>Loading admin data...</div>;
+
+  return (
+    <div className="admin-dashboard">
+      <h2>Admin Dashboard</h2>
+
+      {/* Recovery Management */}
+      <div className="recovery-section">
+        <h3>Position Recovery</h3>
+        <button onClick={triggerRecovery} className="btn-primary">
+          Trigger Position Recovery
+        </button>
+
+        {recoveryStatus && (
+          <div className="recovery-stats">
+            <p>Total Users: {recoveryStatus.totalUsers}</p>
+            <div className="user-stats">
+              {recoveryStatus.userStats?.map((user, idx) => (
+                <div key={idx} className="user-stat">
+                  <h4>{user.username}</h4>
+                  <p>Active Positions: {user.activePositions}</p>
+                  <p>Vault: {user.vaultAddress?.slice(0, 10)}...</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Error Management */}
+      <div className="error-section">
+        <h3>Error Management</h3>
+
+        {errorSummary && (
+          <div className="error-summary">
+            <h4>Error Summary</h4>
+            <p>Total Unique Errors: {errorSummary.totalUniqueErrors}</p>
+            <p>Total Error Count: {errorSummary.totalErrorCount}</p>
+            <p>Total Suppressed: {errorSummary.totalSuppressed}</p>
+          </div>
+        )}
+
+        <div className="error-actions">
+          <button onClick={() => cleanupErrors(30)} className="btn-secondary">
+            Cleanup Errors (30min)
+          </button>
+          <button onClick={() => cleanupErrors(60)} className="btn-secondary">
+            Cleanup Errors (60min)
+          </button>
+          <button onClick={loadAdminData} className="btn-outline">
+            Refresh Data
+          </button>
+        </div>
+
+        {errorStats?.errors && errorStats.errors.length > 0 && (
+          <div className="error-details">
+            <h4>Error Details</h4>
+            <div className="error-list">
+              {errorStats.errors.slice(0, 10).map((error, idx) => (
+                <div key={idx} className="error-item">
+                  <h5>{error.errorKey}</h5>
+                  <p>Count: {error.count} | Suppressed: {error.suppressed}</p>
+                  <p>First: {new Date(error.firstOccurrence).toLocaleString()}</p>
+                  <p>Last: {new Date(error.lastOccurrence).toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
         <p>Portfolio Value: ${vaultInfo?.portfolioValue?.totalValueUSD}</p>
       </div>
 
@@ -922,6 +1188,88 @@ curl -X POST http://localhost:3000/users/testuser/signal \
       "stopLoss": 3100
     }
   }'
+```
+
+## 📚 Complete API Reference
+
+### Core Trading APIs
+
+| Endpoint     | Method | Description                     | Required API Key Role |
+| ------------ | ------ | ------------------------------- | --------------------- |
+| `/health`    | GET    | Service health with error stats | `readonly` or higher  |
+| `/config`    | GET    | Service configuration           | `readonly` or higher  |
+| `/signal`    | POST   | Process trading signal          | `trading` or higher   |
+| `/positions` | GET    | Get all positions               | `readonly` or higher  |
+| `/vault`     | GET    | Get vault information           | `readonly` or higher  |
+| `/trade`     | POST   | Execute manual trade            | `trading` or higher   |
+
+### User Management APIs
+
+| Endpoint                     | Method | Description                      | Required API Key Role |
+| ---------------------------- | ------ | -------------------------------- | --------------------- |
+| `/users/register`            | POST   | Register new user                | `trading` or higher   |
+| `/users/:username`           | GET    | Get user info                    | `readonly` or higher  |
+| `/users/:username/settings`  | PUT    | Update user settings             | `trading` or higher   |
+| `/users/:username/vault`     | GET    | Get user vault info              | `readonly` or higher  |
+| `/users/:username/positions` | GET    | Get user positions               | `readonly` or higher  |
+| `/users/:username/signal`    | POST   | Process signal for specific user | `trading` or higher   |
+
+### Admin APIs
+
+| Endpoint                               | Method | Description               | Required API Key Role |
+| -------------------------------------- | ------ | ------------------------- | --------------------- |
+| `/admin/recovery/positions`            | POST   | Trigger position recovery | `admin`               |
+| `/admin/recovery/status`               | GET    | Get recovery status       | `admin`               |
+| `/admin/errors/summary`                | GET    | Get error summary         | `admin`               |
+| `/admin/errors/stats`                  | GET    | Get detailed error stats  | `admin`               |
+| `/admin/errors/cleanup`                | POST   | Cleanup old errors        | `admin`               |
+| `/users/:username/positions/persisted` | GET    | Get persisted positions   | `admin`               |
+
+### Request Examples
+
+#### Register User
+
+```bash
+curl -X POST http://localhost:3000/users/register \
+  -H "X-API-Key: trading_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "user123",
+    "vaultAddress": "0x1234...",
+    "email": "user@example.com"
+  }'
+```
+
+#### Process Trading Signal
+
+```bash
+curl -X POST http://localhost:3000/signal \
+  -H "X-API-Key: trading_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Buy WETH at $3200, TP: $3400, SL: $3100"
+  }'
+```
+
+#### Get User Positions
+
+```bash
+curl -H "X-API-Key: readonly_your_key_here" \
+  http://localhost:3000/users/user123/positions
+```
+
+#### Trigger Position Recovery (Admin)
+
+```bash
+curl -X POST http://localhost:3000/admin/recovery/positions \
+  -H "X-API-Key: admin_your_key_here"
+```
+
+#### Get Error Summary (Admin)
+
+```bash
+curl -H "X-API-Key: admin_your_key_here" \
+  http://localhost:3000/admin/errors/summary
 ```
 
 ## ✅ Quick Integration Checklist

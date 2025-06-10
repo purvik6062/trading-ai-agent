@@ -142,7 +142,10 @@ export class SignalListenerService {
 
     // Convert to uppercase for comparison (TOKEN_ADDRESSES keys are uppercase)
     const tokenSymbol = tokenMentioned.toUpperCase();
-
+    console.log(tokenSymbol);
+    console.log(
+      Object.prototype.hasOwnProperty.call(TOKEN_ADDRESSES, tokenSymbol)
+    );
     // Check if the token exists in our TOKEN_ADDRESSES object
     return Object.prototype.hasOwnProperty.call(TOKEN_ADDRESSES, tokenSymbol);
   }
@@ -206,6 +209,7 @@ export class SignalListenerService {
       );
 
       if (!isAllowed) {
+        logger.info("Document filtered out: token not allowed");
         logger.debug("Document filtered out: token not allowed", {
           tokenMentioned: document.signal_data?.tokenMentioned,
           allowedTokens: Object.keys(TOKEN_ADDRESSES).slice(0, 10) + "...", // Show first 10 for brevity

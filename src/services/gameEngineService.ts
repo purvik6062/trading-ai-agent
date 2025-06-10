@@ -7,6 +7,7 @@ import {
 } from "@virtuals-protocol/game";
 import { config } from "../config";
 import { logger } from "../utils/logger";
+import { errorManager } from "../utils/errorManager";
 import {
   TradingSignal,
   Position,
@@ -70,6 +71,14 @@ export class GameEngineService {
     try {
       logger.info("🤖 GameEngine: Initializing service...");
 
+      // Initialize multi-position manager with persistence recovery
+      const recoveryResult = await this.multiPositionManager.init();
+      logger.info("🔄 Position recovery completed", {
+        totalRecovered: recoveryResult.totalRecovered,
+        activePositions: recoveryResult.activePositions,
+        expiredPositions: recoveryResult.expiredPositions,
+      });
+
       // Create trading functions
       const tradingFunctions = this.createTradingFunctions();
 
@@ -96,6 +105,7 @@ export class GameEngineService {
             trailingStopStats: this.trailingStopService.getTrailingStopStats(),
             walletAddress: await this.enzymeService.getWalletAddress(),
             timestamp: new Date().toISOString(),
+            recoveryInfo: recoveryResult,
           };
         },
       });
@@ -149,7 +159,10 @@ export class GameEngineService {
         "🤖 GameEngine: Service initialized successfully with multi-position management"
       );
     } catch (error) {
-      logger.error("🤖 GameEngine: Error initializing service:", error);
+      errorManager.logError("gameengine-initialization", error, {
+        operation: "init",
+        vaultAddress: this.vaultAddress,
+      });
       throw error;
     }
   }
@@ -169,7 +182,9 @@ export class GameEngineService {
           await this.multiPositionManager.monitorAllPositions();
         }
       } catch (error) {
-        logger.error("🤖 GameEngine: Error in centralized monitoring:", error);
+        errorManager.logError("gameengine-monitoring", error, {
+          operation: "centralizedMonitoring",
+        });
       }
     }, 30000); // 30 seconds
 
@@ -463,7 +478,7 @@ export class GameEngineService {
       // Execute trade through Enzyme
       const swapParams: SwapStrategy = {
         fromTokenSymbol: "USDC",
-        toTokenSymbol: position.signal.token,
+        toTokenSymbol: position.signal.tokenMentioned,
         amountPercentage: positionSize,
         maxSlippage: 1.0,
       };
@@ -561,7 +576,10 @@ export class GameEngineService {
 
       logger.info("🤖 GameEngine: Signal processed");
     } catch (error) {
-      logger.error("🤖 GameEngine: Error processing signal:", error);
+      errorManager.logError("gameengine-signal-processing", error, {
+        operation: "processSignal",
+        message: signalMessage,
+      });
       throw error;
     }
   }
@@ -576,7 +594,9 @@ export class GameEngineService {
       try {
         await this.multiPositionManager.monitorAllPositions();
       } catch (error) {
-        logger.error("🤖 GameEngine: Error in continuous operation:", error);
+        errorManager.logError("gameengine-continuous-operation", error, {
+          operation: "continuousMonitoring",
+        });
       }
     }, intervalSeconds * 1000);
   }
@@ -642,7 +662,10 @@ export class GameEngineService {
 
       return null;
     } catch (error) {
-      logger.error("🤖 GameEngine: Error processing signal:", error);
+      errorManager.logError("gameengine-trading-signal", error, {
+        operation: "processTradingSignal",
+        token: signal?.token,
+      });
       throw error;
     }
   }

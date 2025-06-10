@@ -99,3 +99,32 @@ export interface TradeExecution {
   success: boolean;
   error?: string;
 }
+
+// Position persistence types
+export interface PersistedPosition extends Position {
+  username?: string;
+  vaultAddress?: string;
+  lastMonitoredAt?: Date;
+  recoveredAt?: Date;
+}
+
+export interface PositionRecoveryResult {
+  totalRecovered: number;
+  activePositions: number;
+  expiredPositions: number;
+  failedRecovery: number;
+  recoveredPositions: PersistedPosition[];
+  errors: string[];
+}
+
+export interface PositionGroup {
+  id: string;
+  token: string;
+  tokenId: string;
+  positions: Position[];
+  totalExposure: number;
+  averageEntryPrice: number;
+  combinedTargets: number[];
+  exitStrategy: "individual" | "grouped";
+  status: "active" | "closed" | "partial";
+}
