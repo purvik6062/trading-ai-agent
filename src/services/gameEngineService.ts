@@ -150,7 +150,8 @@ export class GameEngineService {
         workers: [this.worker],
       });
 
-      await this.agent.init();
+      // Initialize agent with error handling for rate limits
+      await this.initializeAgentWithRetry();
 
       // Start centralized position monitoring
       this.startCentralizedMonitoring();
@@ -168,10 +169,144 @@ export class GameEngineService {
   }
 
   /**
+   * Initialize agent with retry logic and rate limit handling
+   */
+  private async initializeAgentWithRetry(
+    maxRetries: number = 5
+  ): Promise<void> {
+    let retryCount = 0;
+    const baseDelay = 5000; // 5 seconds base delay
+
+    while (retryCount < maxRetries) {
+      try {
+        await this.agent!.init();
+        logger.info("🤖 GameEngine: Agent initialized successfully");
+        return;
+      } catch (error: any) {
+        retryCount++;
+
+        // Check if it's a rate limit error (429)
+        const isRateLimit =
+          error?.response?.status === 429 ||
+          error?.status === 429 ||
+          (error?.message && error.message.includes("Too Many Requests")) ||
+          (error?.message && error.message.includes("429"));
+
+        if (isRateLimit) {
+          // Use error manager to suppress verbose 429 errors
+          const logged = errorManager.logError(
+            "gameengine-agent-rate-limit",
+            error,
+            {
+              operation: "agent.init",
+              retryCount,
+              maxRetries,
+            }
+          );
+
+          if (retryCount < maxRetries) {
+            const delay = baseDelay * Math.pow(2, retryCount - 1); // Exponential backoff
+            if (logged) {
+              logger.warn(
+                `🤖 GameEngine: Rate limited, retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`
+              );
+            }
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+        } else {
+          // For non-rate-limit errors, log normally and rethrow
+          errorManager.logError("gameengine-agent-init", error, {
+            operation: "agent.init",
+            retryCount,
+          });
+          throw error;
+        }
+      }
+    }
+
+    // If we get here, all retries failed
+    const finalError = new Error(
+      `Failed to initialize GameEngine agent after ${maxRetries} attempts due to rate limiting`
+    );
+    errorManager.logError("gameengine-agent-init-final-failure", finalError, {
+      operation: "agent.init",
+      maxRetries,
+    });
+    throw finalError;
+  }
+
+  /**
+   * Execute agent step with retry logic for rate limits
+   */
+  private async executeAgentStepWithRetry(
+    signalMessage: string,
+    maxRetries: number = 3
+  ): Promise<void> {
+    let retryCount = 0;
+    const baseDelay = 2000; // 2 seconds base delay
+
+    while (retryCount < maxRetries) {
+      try {
+        await this.agent!.step();
+        return;
+      } catch (error: any) {
+        retryCount++;
+
+        // Check if it's a rate limit error (429)
+        const isRateLimit =
+          error?.response?.status === 429 ||
+          error?.status === 429 ||
+          (error?.message && error.message.includes("Too Many Requests")) ||
+          (error?.message && error.message.includes("429"));
+
+        if (isRateLimit) {
+          // Use error manager to suppress verbose 429 errors
+          const logged = errorManager.logError(
+            "gameengine-agent-step-rate-limit",
+            error,
+            {
+              operation: "agent.step",
+              retryCount,
+              maxRetries,
+              signalMessage: signalMessage.substring(0, 100), // Truncate for logging
+            }
+          );
+
+          if (retryCount < maxRetries) {
+            const delay = baseDelay * retryCount; // Linear backoff for faster steps
+            if (logged) {
+              logger.warn(
+                `🤖 GameEngine: Agent step rate limited, retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`
+              );
+            }
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+        } else {
+          // For non-rate-limit errors, rethrow immediately
+          throw error;
+        }
+      }
+    }
+
+    // If we get here, all retries failed due to rate limiting
+    const finalError = new Error(
+      `Agent step failed after ${maxRetries} attempts due to rate limiting`
+    );
+    errorManager.logError("gameengine-agent-step-final-failure", finalError, {
+      operation: "agent.step",
+      maxRetries,
+      signalMessage: signalMessage.substring(0, 100),
+    });
+    throw finalError;
+  }
+
+  /**
    * Start centralized monitoring for all positions
    */
   private startCentralizedMonitoring(): void {
-    // Monitor all positions every 30 seconds
+    // Monitor all positions every 60 seconds to reduce API rate limit hits
     this.monitoringInterval = setInterval(async () => {
       try {
         const stats = this.multiPositionManager.getStats();
@@ -186,10 +321,10 @@ export class GameEngineService {
           operation: "centralizedMonitoring",
         });
       }
-    }, 30000); // 30 seconds
+    }, 60000); // 60 seconds (increased from 30s to reduce rate limit hits)
 
     logger.info("🤖 GameEngine: Started centralized position monitoring", {
-      interval: "30s",
+      interval: "60s",
     });
   }
 
@@ -572,7 +707,8 @@ export class GameEngineService {
         throw new Error("Game Engine not initialized");
       }
 
-      await this.agent.step();
+      // Use rate limit handling for agent.step() calls
+      await this.executeAgentStepWithRetry(signalMessage);
 
       logger.info("🤖 GameEngine: Signal processed");
     } catch (error) {
