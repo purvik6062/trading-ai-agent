@@ -214,7 +214,11 @@ export class MongoUserService {
       const signer = new ethers.Wallet(config.wallet.privateKey, provider);
 
       // Initialize Enzyme service for this user's vault (using delegated permissions)
-      const enzymeService = new EnzymeVaultService(provider, signer);
+      const enzymeService = new EnzymeVaultService(
+        provider,
+        signer,
+        userMapping.vaultAddress
+      );
 
       // Initialize Game Engine service for this user's vault (using delegated permissions)
       const gameEngineConfig: GameEngineConfig = {
@@ -232,6 +236,11 @@ export class MongoUserService {
         .multiPositionManager;
       if (multiPositionManager && multiPositionManager.setUserContext) {
         multiPositionManager.setUserContext(username);
+      }
+
+      // Set username in GameEngineService for error tracking
+      if (gameEngineService.setUsername) {
+        gameEngineService.setUsername(username);
       }
 
       // Create session

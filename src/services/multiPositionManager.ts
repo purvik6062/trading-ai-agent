@@ -656,30 +656,66 @@ export class MultiPositionManager {
   async monitorAllPositions(): Promise<void> {
     if (this.activePositions.size === 0) return;
 
+    // Clean up position groups with no active positions
+    this.cleanupInactiveGroups();
+
     logger.debug(
       `🔍 Monitoring ${this.activePositions.size} active positions for user: ${this.currentUsername || "unknown"}`
     );
 
-    const positions = Array.from(this.activePositions.values());
+    // Filter positions that need monitoring (only PENDING and ACTIVE)
+    const positions = Array.from(this.activePositions.values()).filter(
+      (p) =>
+        p.status === PositionStatus.PENDING ||
+        p.status === PositionStatus.ACTIVE
+    );
+
+    if (positions.length === 0) {
+      logger.debug("No positions requiring price monitoring");
+      return;
+    }
+
+    // Only get unique token IDs from positions that need monitoring
     const uniqueTokenIds = [...new Set(positions.map((p) => p.signal.tokenId))];
 
     try {
-      // Get prices for all tokens
+      // Get prices only for tokens with active/pending positions
+      logger.debug(
+        `Fetching prices for ${uniqueTokenIds.length} tokens: ${uniqueTokenIds.join(", ")}`
+      );
+
       const tokenPrices =
         await this.coinGeckoService.getMultipleTokenPrices(uniqueTokenIds);
       const priceMap = new Map(
         tokenPrices.map((price) => [price.id, price.current_price])
       );
 
-      // Group positions by token for efficient processing
+      // Group positions by token for efficient processing, but only for active groups
       for (const [groupKey, group] of this.positionGroups) {
+        // Skip groups that have no active/pending positions
+        const activeGroupPositions = group.positions.filter(
+          (p) =>
+            p.status === PositionStatus.PENDING ||
+            p.status === PositionStatus.ACTIVE
+        );
+
+        if (activeGroupPositions.length === 0) {
+          logger.debug(
+            `Skipping monitoring for ${group.token} - no active/pending positions`
+          );
+          continue;
+        }
+
         const currentPrice = priceMap.get(group.tokenId);
         if (!currentPrice) continue;
 
         if (group.exitStrategy === "grouped") {
           await this.monitorGroupedPositions(group, currentPrice);
         } else {
-          await this.monitorIndividualPositions(group.positions, currentPrice);
+          await this.monitorIndividualPositions(
+            activeGroupPositions,
+            currentPrice
+          );
         }
       }
     } catch (error) {
@@ -866,6 +902,7 @@ export class MultiPositionManager {
       if (group) {
         group.positions = group.positions.filter((p) => p.id !== position.id);
         if (group.positions.length === 0) {
+          logger.debug(`Removing empty position group for ${group.token}`);
           this.positionGroups.delete(position.signal.tokenId);
         } else {
           this.recalculateGroupMetrics(group);
@@ -963,6 +1000,24 @@ export class MultiPositionManager {
     return Array.from(this.activePositions.values()).filter(
       (p) => p.signal.tokenId === tokenId
     );
+  }
+
+  /**
+   * Clean up position groups that have no active/pending positions
+   */
+  private cleanupInactiveGroups(): void {
+    for (const [tokenId, group] of this.positionGroups) {
+      const activePositions = group.positions.filter(
+        (p) =>
+          p.status === PositionStatus.PENDING ||
+          p.status === PositionStatus.ACTIVE
+      );
+
+      if (activePositions.length === 0) {
+        logger.debug(`Cleaning up inactive position group for ${group.token}`);
+        this.positionGroups.delete(tokenId);
+      }
+    }
   }
 
   private getTotalExposure(): number {

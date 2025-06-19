@@ -101,8 +101,12 @@ async function initializeServices() {
     const provider = new ethers.JsonRpcProvider(config.rpc.url);
     const signer = new ethers.Wallet(config.wallet.privateKey, provider);
 
-    // Initialize Enzyme service
-    enzymeService = new EnzymeVaultService(provider, signer);
+    // Initialize Enzyme service (legacy single-user - using env vault address)
+    enzymeService = new EnzymeVaultService(
+      provider,
+      signer,
+      config.enzyme.vaultAddress
+    );
 
     // Initialize Game Engine service
     const gameEngineConfig: GameEngineConfig = {

@@ -1,7 +1,10 @@
 import express from "express";
 import { config, validateConfig } from "./config";
 import { logger } from "./utils/logger";
-import { GameEngineService } from "./services/gameEngineService";
+import {
+  GameEngineService,
+  GameEngineConfig,
+} from "./services/gameEngineService";
 import { SignalParser } from "./utils/signalParser";
 import {
   authenticateApiKey,
@@ -13,15 +16,36 @@ import {
 } from "./middleware/advancedAuth";
 import { ApiKeyManager, ApiKeyType } from "./models/ApiKey";
 import { RateLimitService } from "./services/rateLimitService";
+import { MongoUserService } from "./services/mongoUserService";
+import { MultiUserSignalService } from "./services/multiUserSignalService";
+import { TrailingStopService } from "./services/trailingStopService";
+import { TradeErrorService } from "./services/tradeErrorService";
 
 export class TradingAgentServer {
   private app: express.Application;
   private gameEngineService: GameEngineService;
+  private userService: MongoUserService;
+  private multiUserSignalService: MultiUserSignalService;
+  private trailingStopService: TrailingStopService;
+  private tradeErrorService: TradeErrorService;
 
   constructor() {
     this.app = express();
 
-    // Initialize Game Engine service with proper config
+    // Initialize trailing stop service
+    this.trailingStopService = new TrailingStopService();
+
+    // Initialize trade error service
+    this.tradeErrorService = new TradeErrorService();
+
+    // Initialize Multi-user services
+    this.userService = new MongoUserService();
+    this.multiUserSignalService = new MultiUserSignalService(
+      this.userService,
+      this.trailingStopService
+    );
+
+    // Initialize legacy Game Engine service (for backwards compatibility)
     const gameEngineConfig = {
       apiKey: config.gameEngine.apiKey,
       baseUrl: config.gameEngine.baseUrl,
@@ -156,7 +180,7 @@ export class TradingAgentServer {
       config.apiSecurity.enabled ? requireTrading : (req, res, next) => next(),
       async (req, res) => {
         try {
-          const { message } = req.body;
+          const { message, username } = req.body;
 
           if (!message || typeof message !== "string") {
             return res.status(400).json({
@@ -165,8 +189,17 @@ export class TradingAgentServer {
             });
           }
 
+          if (!username || typeof username !== "string") {
+            return res.status(400).json({
+              success: false,
+              error:
+                "Missing or invalid username parameter - required for multi-user vault routing",
+            });
+          }
+
           logger.info("Received trading signal:", {
             messageLength: message.length,
+            username: username,
           });
 
           // Parse the signal first for validation
@@ -179,8 +212,35 @@ export class TradingAgentServer {
             });
           }
 
-          // Process through Game Engine
-          await this.gameEngineService.processSignal(message);
+          // Process through Multi-User Service to use correct vault address
+          const results: Array<{
+            username: string;
+            traded: boolean;
+            positionId?: string;
+            reason?: string;
+          }> = [];
+
+          for (const signal of signals) {
+            try {
+              const result =
+                await this.multiUserSignalService.processSignalForSpecificUser(
+                  username,
+                  signal
+                );
+              results.push(result);
+            } catch (error) {
+              logger.error(
+                `Error processing signal for user ${username}:`,
+                error
+              );
+              results.push({
+                username: username,
+                traded: false,
+                reason:
+                  error instanceof Error ? error.message : "Unknown error",
+              });
+            }
+          }
 
           const summaries = signals.map((signal) =>
             SignalParser.getSignalSummary(signal)
@@ -188,9 +248,11 @@ export class TradingAgentServer {
 
           res.json({
             success: true,
-            message: "Trading signal processed successfully",
+            message:
+              "Trading signal processed successfully using user-specific vault",
             signalsFound: signals.length,
             signals: summaries,
+            results: results,
             timestamp: new Date().toISOString(),
           });
         } catch (error) {
@@ -337,18 +399,44 @@ export class TradingAgentServer {
     this.app.use(authErrorHandler);
   }
 
+  async initialize(): Promise<void> {
+    try {
+      // Initialize trade error service
+      try {
+        await this.tradeErrorService.connect();
+      } catch (error) {
+        logger.warn(
+          "Trade error service connection failed, continuing without error logging:",
+          error
+        );
+      }
+
+      // Initialize multi-user services
+      await this.userService.connect();
+      await this.multiUserSignalService.init();
+
+      // Initialize legacy service for backwards compatibility
+      await this.gameEngineService.init();
+
+      await this.initializeSecurity();
+
+      logger.info(
+        "✅ Trading Agent Server initialized with multi-user support"
+      );
+    } catch (error) {
+      logger.error("❌ Failed to initialize Trading Agent Server:", error);
+      throw error;
+    }
+  }
+
   async start(): Promise<void> {
     try {
       // Validate configuration
       validateConfig();
       logger.info("Configuration validated successfully");
 
-      // Initialize security system
-      await this.initializeSecurity();
-
-      // Initialize Game Engine service
-      await this.gameEngineService.init();
-      logger.info("Game Engine service initialized");
+      // Initialize all services including multi-user support
+      await this.initialize();
 
       // Start the server
       const server = this.app.listen(config.server.port, () => {

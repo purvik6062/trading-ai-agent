@@ -110,10 +110,17 @@ export class EnzymeVaultService {
   private signer: ethers.Signer;
   private integrationManagerAddress: string;
   private uniswapV3AdapterAddress: string;
+  private userVaultAddress: string;
 
-  constructor(provider: ethers.Provider, signer: ethers.Signer) {
+  constructor(
+    provider: ethers.Provider,
+    signer: ethers.Signer,
+    userVaultAddress?: string
+  ) {
     this.provider = provider;
     this.signer = signer;
+    this.userVaultAddress = userVaultAddress || config.enzyme.vaultAddress;
+
     this.integrationManagerAddress =
       ENZYME_ARBITRUM_ADDRESSES.IntegrationManager;
     this.uniswapV3AdapterAddress = ENZYME_ARBITRUM_ADDRESSES.UniswapV3Adapter;
@@ -681,9 +688,16 @@ export class EnzymeVaultService {
   }
 
   /**
-   * Get vault address
+   * Get vault address (returns user-specific vault address)
    */
   getVaultAddress(): string {
-    return config.enzyme.vaultAddress;
+    return this.userVaultAddress;
+  }
+
+  /**
+   * Set vault address (for updating user-specific vault)
+   */
+  setVaultAddress(vaultAddress: string): void {
+    this.userVaultAddress = vaultAddress;
   }
 }

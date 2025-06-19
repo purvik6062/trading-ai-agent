@@ -17,6 +17,7 @@ import {
 import { EnzymeVaultService, SwapStrategy } from "./enzymeService";
 import { CoinGeckoService } from "./coinGeckoService";
 import { TrailingStopService } from "./trailingStopService";
+import { TradeErrorService } from "./tradeErrorService";
 import { SignalParser } from "../utils/signalParser";
 import { ethers } from "ethers";
 import {
@@ -39,11 +40,13 @@ export class GameEngineService {
   private enzymeService: EnzymeVaultService;
   private coinGeckoService: CoinGeckoService;
   private trailingStopService: TrailingStopService;
+  private tradeErrorService: TradeErrorService;
   private multiPositionManager: MultiPositionManager;
   private provider: ethers.Provider;
   private signer: ethers.Signer;
   private vaultAddress: string;
   private monitoringInterval: NodeJS.Timeout | null = null;
+  private username?: string; // Store username for error tracking
 
   constructor(config: GameEngineConfig) {
     // Initialize ethers provider and signer
@@ -52,9 +55,14 @@ export class GameEngineService {
     this.vaultAddress = config.vaultAddress;
 
     // Initialize services
-    this.enzymeService = new EnzymeVaultService(this.provider, this.signer);
+    this.enzymeService = new EnzymeVaultService(
+      this.provider,
+      this.signer,
+      this.vaultAddress
+    );
     this.coinGeckoService = new CoinGeckoService();
     this.trailingStopService = new TrailingStopService();
+    this.tradeErrorService = new TradeErrorService();
 
     // Initialize multi-position manager
     this.multiPositionManager = new MultiPositionManager(
@@ -70,6 +78,16 @@ export class GameEngineService {
   async init(): Promise<void> {
     try {
       logger.info("🤖 GameEngine: Initializing service...");
+
+      // Initialize trade error service
+      try {
+        await this.tradeErrorService.connect();
+      } catch (error) {
+        logger.warn(
+          "Trade error service connection failed, continuing without error logging:",
+          error
+        );
+      }
 
       // Initialize multi-position manager with persistence recovery
       const recoveryResult = await this.multiPositionManager.init();
@@ -751,6 +769,13 @@ export class GameEngineService {
   }
 
   /**
+   * Set username for error tracking
+   */
+  setUsername(username: string): void {
+    this.username = username;
+  }
+
+  /**
    * Process a trading signal through the AI agent
    */
   async processTradingSignal(signal: TradingSignal): Promise<Position | null> {
@@ -786,9 +811,33 @@ export class GameEngineService {
           });
           return result.position;
         } else {
+          // Trade failed - log error and DON'T save position
           logger.error("🤖 GameEngine: Trade execution failed", {
             error: tradeResult.error,
           });
+
+          // Log to trade errors collection
+          if (this.tradeErrorService.isConnectedToMongoDB() && this.username) {
+            try {
+              await this.tradeErrorService.logTradeError(
+                this.username,
+                this.vaultAddress,
+                signal,
+                tradeResult.error || "Unknown trade execution error",
+                "execution_error"
+              );
+            } catch (errorLogError) {
+              logger.error("Failed to log trade error:", errorLogError);
+            }
+          }
+
+          // Remove the failed position from MultiPositionManager
+          await this.multiPositionManager.closePosition(
+            result.position.id,
+            "Trade execution failed"
+          );
+
+          return null; // Don't return position for failed trades
         }
       } else {
         logger.warn("🤖 GameEngine: Signal not executed", {

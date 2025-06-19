@@ -81,7 +81,33 @@ Persists active trading positions across service restarts:
 }
 ```
 
-### 4. `user_trading_settings` (Optional)
+### 4. `trade_errors` (New - Critical for Error Tracking)
+
+Stores failed trade attempts with detailed error information:
+
+```javascript
+{
+  "_id": "...",
+  "id": "trade_error_1704067200000_abc123def",
+  "username": "testuser",
+  "vaultAddress": "0x1234567890123456789012345678901234567890",
+  "signal": {
+    "token": "AAVE",
+    "tokenId": "aave",
+    "signal": "Buy",
+    "currentPrice": 180.5,
+    "targets": [190, 200],
+    "stopLoss": 170
+  },
+  "error": "Insufficient balance of USDC in vault",
+  "errorType": "insufficient_balance", // insufficient_balance, network_error, validation_error, execution_error, unknown
+  "timestamp": "2024-01-01T12:00:00.000Z",
+  "retryCount": 0,
+  "resolved": false
+}
+```
+
+### 5. `user_trading_settings` (Optional)
 
 User-specific trading preferences:
 
@@ -117,6 +143,13 @@ The service automatically:
   - `positions.signal.tokenId`
   - `positions.{status, username}` (compound)
   - `positions.{status, signal.maxExitTime}` (compound)
+  - `trade_errors.id` (unique)
+  - `trade_errors.username`
+  - `trade_errors.vaultAddress`
+  - `trade_errors.errorType`
+  - `trade_errors.timestamp`
+  - `trade_errors.resolved`
+  - `trade_errors.{username, errorType, resolved}` (compound)
 
 ## 🧪 Test Your Setup
 
